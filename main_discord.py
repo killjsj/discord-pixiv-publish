@@ -6,7 +6,8 @@ import uuid
 import aiofiles
 import aiohttp
 import discord
-from discord import NSFWLevel, app_commands
+from discord import Button, ButtonStyle, Interaction, Member, NSFWLevel, app_commands
+from discord.ui import Button, View
 import requests
 import os
 import random
@@ -175,11 +176,11 @@ async def setu(interaction: discord.Interaction, r18: str, num: int = 1, tags0: 
         image_data_1 = response_api_1.json()
         print(f"API 1 响应: {image_data_1}")
 
-        # 请求 API 2
-        response_api_2 = requests.post(api_url_2, json=params_2)
-        response_api_2.raise_for_status()
-        image_data_2 = response_api_2.json()
-        print(f"API 2 响应: {image_data_2}")
+        # # 请求 API 2
+        # response_api_2 = requests.post(api_url_2, json=params_2)
+        # response_api_2.raise_for_status()
+        # image_data_2 = response_api_2.json()
+        # print(f"API 2 响应: {image_data_2}")
 
         # 合并两个 API 的数据
         combined_data = []
@@ -192,12 +193,12 @@ async def setu(interaction: discord.Interaction, r18: str, num: int = 1, tags0: 
                     combined_data.append(img)
                     seen_pids.add(pid)
 
-        if isinstance(image_data_2, list) and len(image_data_2) > 0:
-            for img in image_data_2:
-                pid = str(img.get("pid") or img.get("pid", ""))
-                if pid and pid not in seen_pids:
-                    combined_data.append(img)
-                    seen_pids.add(pid)
+        # if isinstance(image_data_2, list) and len(image_data_2) > 0:
+        #     for img in image_data_2:
+        #         pid = str(img.get("pid") or img.get("pid", ""))
+        #         if pid and pid not in seen_pids:
+        #             combined_data.append(img)
+        #             seen_pids.add(pid)
 
         # 处理图片数据
         for image in combined_data:
@@ -239,15 +240,32 @@ async def setu(interaction: discord.Interaction, r18: str, num: int = 1, tags0: 
                     except Exception as remove_error:
                         print(f"删除文件失败：{remove_error}")
             else:
-                await interaction.followup.send(f"下载图片失败: {image_url}", ephemeral=True)
+                embed = discord.Embed(title=f"下载图片失败: {str(e)}")
+                embed.add_field(name="作者", value=image.get("author", "未知"), inline=True)
+                embed.add_field(name="PID", value=image.get("pid", "未知"), inline=True)
+                embed.add_field(name="标签", value=", ".join(image.get("tags", [])), inline=False)
+                embed.add_field(name="url:", value=image_url, inline=False)
+                await interaction.followup.send(embed=embed, ephemeral=True)
     except requests.exceptions.RequestException as e:
-        await interaction.followup.send(f"HTTP 请求错误：{str(e)}", ephemeral=True)
+        embed = discord.Embed(title=f"api请求失败: {str(e)}")
+        embed.add_field(name="作者", value=image.get("author", "未知"), inline=True)
+        embed.add_field(name="PID", value=image.get("pid", "未知"), inline=True)
+        embed.add_field(name="标签", value=", ".join(image.get("tags", [])), inline=False)
+        embed.add_field(name="url:", value=image_url, inline=False)
+        await interaction.followup.send(embed=embed, ephemeral=True)
     except Exception as e:
-        await interaction.followup.send(f"发生错误：{str(e)}", ephemeral=True)
+        embed = discord.Embed(title=f"Exception as e: {str(e)}")
+        embed.add_field(name="作者", value=image.get("author", "未知"), inline=True)
+        embed.add_field(name="PID", value=image.get("pid", "未知"), inline=True)
+        embed.add_field(name="标签", value=", ".join(image.get("tags", [])), inline=False)
+        embed.add_field(name="url:", value=image_url, inline=False)
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
 @bot.tree.command(name="thanks", description="Send a thanks(?)")
 async def help(interaction: discord.Interaction):
-    await interaction.followup.send("""1.框架:discord.py\n2.使用api:"https://api.lolicon.app/setu/v2" """,ephemeral=True)
+    await interaction.followup.send("""1.框架:discord.py
+2.使用api:"https://api.lolicon.app/setu/v2"
+3.gui我实在不想写了所以感谢copilot""",ephemeral=True)
 
 class TRPGSession:
     def __init__(self, host_id: int, channel_id: int,start_channel_id: int):
@@ -255,13 +273,14 @@ class TRPGSession:
         self.channel_id = channel_id
         self.start_channel_id = start_channel_id  # 记录启动频道
         self.players: Set[int] = {host_id}
+        self.ban_players: dict[int,list[int]] = {}
+        # self.waiting_players: list[dict[int,int]] = {}
         self.points_template: Dict[str, int] = {}  # 点数项目列表
         self.player_points: Dict[int, Dict[str, int]] = {}  # 玩家的点数
         self.personal_memos: Dict[int, List[str]] = {}  # 每个人的个人备忘录
         self.host_player_memos: Dict[int, List[str]] = {}  # 主持人对玩家的备忘录
         self.total_points: int = 0  # 总点数
         self.player_hp: Dict[int, int] = {}  # 玩家血量
-        self.max_hp: Dict[int, int] = {}  # 玩家最大血量
         
 group = app_commands.Group(name="trpo", description="TRPO")
 
@@ -323,12 +342,12 @@ async def startT(interaction: discord.Interaction,public:bool = False):
         
         # 创建新的跑团会话
         session = TRPGSession(interaction.user.id, channel.id,start_channel_id=interaction.channel_id)
-        bot.trpg_sessions[guild_id] = session
+        bot.trpg_sessions[interaction.user.id] = session
         
         await interaction.response.send_message(
             f"跑团已启动!\n"
             f"主持人: {interaction.user.mention}\n"
-            f"频道: {channel.mention}", 
+            f"频道: {channel}", 
             ephemeral=False
         )
     
@@ -344,40 +363,130 @@ async def startT(interaction: discord.Interaction,public:bool = False):
         )
 
 @group.command(name="join", description="加入跑团")
-async def joinT(interaction: discord.Interaction):
+@app_commands.describe(
+    host="主持人"
+)
+async def joinT(interaction: discord.Interaction, host: Member):
     """加入当前跑团"""
-    guild_id = interaction.guild_id
-    if guild_id not in bot.trpg_sessions:
-        await interaction.response.send_message("当前没有进行中的跑团!", ephemeral=True)
+    if host.id not in bot.trpg_sessions:
+        await interaction.response.send_message("host当前没有进行中的跑团!", ephemeral=True)
         return
-    
-    session = bot.trpg_sessions[guild_id]
+
+    session = bot.trpg_sessions[host.id]
     if interaction.user.id in session.players:
         await interaction.response.send_message("你已经在跑团中了!", ephemeral=True)
         return
-    
-    # 添加玩家到跑团
-    session.players.add(interaction.user.id)
-    
-    # 给予频道权限
-    channel = interaction.guild.get_channel(session.channel_id)
-    await channel.set_permissions(interaction.user, read_messages=True,send_messages=True)
-    
-    await interaction.response.send_message(
-        f"{interaction.user.mention} 加入了跑团!", 
-        ephemeral=False
-    )
+    if interaction.user.id in session.ban_players:
+        await interaction.response.send_message("你已被主持人拒绝加入跑团!", ephemeral=True)
+        return
+    await interaction.response.defer(ephemeral=True,thinking=True)  # 延迟响应
+    await interaction.followup.send("申请已发送，等待主持人批准...", ephemeral=True)
 
-# 修改 stopT 命令，添加聊天记录导出功能
+    # 获取频道
+    channel = interaction.guild.get_channel(session.channel_id)
+    applicant = interaction.user  # 保存一下申请人对象
+    
+    
+
+    # 创建审批按钮视图
+    class ApproveView(View):
+        def __init__(self):
+            super().__init__(timeout=60)  # ⏱️ 设置超时时间为 60 秒
+            self.message = None  # 后面用于保存消息引用
+
+        async def interaction_check(self, i: Interaction) -> bool:
+            if i.user.id != host.id:
+                await i.response.send_message("你不是主持人，无法审批。", ephemeral=True)
+                return False
+            return True
+
+        @discord.ui.button(label="✅ 同意加入", style=ButtonStyle.success)
+        async def approve(self, i: Interaction, button: Button):
+            session.players.add(applicant.id)
+            await channel.set_permissions(applicant, read_messages=True, send_messages=True)
+
+            # 通知申请人
+            await interaction.followup.send("✅ 你的加入请求已被主持人批准", ephemeral=True)
+
+
+            # 修改审批消息
+            await i.response.edit_message(content=f"✅ {applicant.mention} 已被主持人批准加入跑团！", view=None)
+            self.stop()
+
+        @discord.ui.button(label="❌ 拒绝加入", style=ButtonStyle.danger)
+        async def reject(self, i: Interaction, button: Button):
+            
+            await i.response.edit_message(content=f"❌ {applicant.mention} 的申请被主持人拒绝。", view=None)
+            await interaction.followup.send(f"❌ {applicant.mention} 你的加入请求已被主持人拒绝",ephemeral=True)
+            
+            self.stop()
+            
+        @discord.ui.button(label="❌ 拒绝加入并在此次跑团内 永久 拒绝", style=ButtonStyle.danger)
+        async def reject_ban(self, i: Interaction, button: Button):
+            origin_channel = interaction.channel  # 原始 /join 执行频道
+            
+            session.ban_players.add(applicant.id)
+            await i.response.edit_message(content=f"❌ {applicant.mention} 的申请被主持人拒绝。", view=None)
+            await interaction.followup.send(f"❌ {applicant.mention} 你的加入请求已被主持人在此次跑团内 永久 拒绝",ephemeral=True)
+            
+            self.stop()
+
+        async def on_timeout(self):
+            if not self.message:  # 安全检查
+                return
+            await self.message.edit(content=f"⌛ {applicant.mention} 的申请已超时，系统自动拒绝。", view=None)
+            origin_channel = interaction.channel  # 原始 /join 执行频道
+            await origin_channel.send(f"❌ {applicant.mention} 你的加入请求已被主持人拒绝(超时)")
+            
+    # 发送审批消息到频道
+    await channel.send(
+        f"📨 {host.mention} 玩家 {applicant.mention} 请求加入跑团，是否批准？(60秒超时自动拒绝)",
+        view=ApproveView()
+    )
+    
+@group.command(name="player",description="玩家管理")
+@app_commands.choices(option=[
+        app_commands.Choice(name="list", value="list"),
+        app_commands.Choice(name="kick", value="kick"),
+
+    ])
+async def playerT(interaction : discord.Interaction,option:str,target:Optional[Member] = None,banned:Optional[bool]=False):
+    session = bot.trpg_sessions[interaction.user.id]
+    if interaction.user.id != session.host_id:
+        await interaction.response.send_message("只有主持人才能使用", ephemeral=True)
+        return
+    re:str ="如果你见到这句话 包出错了"
+    if option == "list":
+        re = "===目前玩家===:\n"
+        for n in session.players:
+            re += bot.get_user(n).name + "\n"
+        re += "===永久拒绝===:"
+        for n in session.ban_players:
+            re += bot.get_user(n).name + "\n"
+        await interaction.response.send_message(re,ephemeral=True)
+        return
+    elif option == "kick":
+        del session.player_points[target.id]
+        del session.personal_memos[target.id]
+        del session.host_player_memos[target.id]
+        await bot.get_channel(session.channel_id).set_permissions(target, read_messages=True, send_messages=True)
+        session.players.remove(target.id)
+        re = f"{target.name} 已被主持人移除!"
+        await interaction.response.send_message(re)
+        return
+        
 @group.command(name="stop", description="结束跑团")
 async def stopT(interaction: discord.Interaction):
     """结束跑团并保存聊天记录"""
-    guild_id = interaction.guild_id
-    if guild_id not in bot.trpg_sessions:
-        await interaction.response.send_message("当前没有进行中的跑团!", ephemeral=True)
+    session = None
+    for n,k in bot.trpg_sessions.items():
+        if interaction.channel_id == k.channel_id:
+            session = k
+    if session == None:
+        await interaction.response.send_message("未发现加入的跑团!", ephemeral=True)
         return
     
-    session = bot.trpg_sessions[guild_id]
+    session = bot.trpg_sessions[interaction.user.id]
     if interaction.user.id != session.host_id:
         await interaction.response.send_message("只有主持人才能结束跑团!", ephemeral=True)
         return
@@ -424,7 +533,7 @@ async def stopT(interaction: discord.Interaction):
         await channel.delete()
         
         # 清理会话
-        del bot.trpg_sessions[guild_id]
+        del bot.trpg_sessions[interaction.user.id]
         
         # await interaction.followup.send("跑团已结束，记录已保存。", ephemeral=False)
         
@@ -466,12 +575,17 @@ async def memoT(
     target: Optional[discord.Member] = None
 ):
     """备忘录系统"""
-    guild_id = interaction.guild_id
-    if guild_id not in bot.trpg_sessions:
-        await interaction.response.send_message("当前没有进行中的跑团!", ephemeral=True)
+    if interaction.channel_id not in bot.trpg_sessions:
+        await interaction.response.send_message("该频道当前没有进行中的跑团!", ephemeral=True)
         return
     
-    session = bot.trpg_sessions[guild_id]
+    session = None
+    for n,k in bot.trpg_sessions.items():
+        if interaction.channel_id == k.channel_id:
+            session = k
+    if session == None:
+        await interaction.response.send_message("未发现加入的跑团!", ephemeral=True)
+        return
     is_host = interaction.user.id == session.host_id
     if not await check_trpg_channel(interaction, session):
         return
@@ -545,7 +659,6 @@ async def memoT(
         app_commands.Choice(name="分配点数", value="assign"),
         app_commands.Choice(name="查看模板", value="list"),
         app_commands.Choice(name="设置点数项目", value="set_point"),
-        app_commands.Choice(name="设置玩家点数", value="set_player"),
         app_commands.Choice(name="血量管理", value="hp")
     ],
     hp_action=[
@@ -560,15 +673,16 @@ async def pointsT(
     point_name: Optional[str] = None,
     value: Optional[int] = None,
     target: Optional[discord.Member] = None,
-    hp_action: Optional[str] = None
+    hp_action: Optional[str] = "set"
 ):
     """管理背板点数"""
-    guild_id = interaction.guild_id
-    if guild_id not in bot.trpg_sessions:
-        await interaction.response.send_message("当前没有进行中的跑团!", ephemeral=True)
+    session = None
+    for n,k in bot.trpg_sessions.items():
+        if interaction.channel_id == k.channel_id:
+            session = k
+    if session == None:
+        await interaction.response.send_message("未发现加入的跑团!", ephemeral=True)
         return
-    
-    session = bot.trpg_sessions[guild_id]
     is_host = interaction.user.id == session.host_id
     if not await check_trpg_channel(interaction, session):
         return
@@ -638,23 +752,23 @@ async def pointsT(
             f"剩余可分配: {remaining}",
             ephemeral=not is_public_message  # 主持人分配时公开，自己分配时私密
         )
-    elif action == "set_player":
-        # 主持人设置玩家点数
-        if not is_host:
-            await interaction.response.send_message("只有主持人才能设置玩家点数!", ephemeral=True)
-            return
-        if not target or not point_name or value is None:
-            await interaction.response.send_message("请指定目标玩家、点数名称和值!", ephemeral=True)
-            return
+    # elif action == "set_player":
+    #     # 主持人设置玩家点数
+    #     if not is_host:
+    #         await interaction.response.send_message("只有主持人才能设置玩家点数!", ephemeral=True)
+    #         return
+    #     if not target or not point_name or value is None:
+    #         await interaction.response.send_message("请指定目标玩家、点数名称和值!", ephemeral=True)
+    #         return
         
-        if target.id not in session.player_points:
-            session.player_points[target.id] = {}
+    #     if target.id not in session.player_points:
+    #         session.player_points[target.id] = {}
         
-        session.player_points[target.id][point_name] = value
-        await interaction.response.send_message(
-            f"主持人已设置 {target.mention} 的 {point_name} 为 {value}",
-            ephemeral=False  # 设为公开
-        )
+    #     session.player_points[target.id][point_name] = value
+    #     await interaction.response.send_message(
+    #         f"主持人已设置 {target.mention} 的 {point_name} 为 {value}",
+    #         ephemeral=False  # 设为公开
+    #     )
 
     elif action == "hp":
         if not is_host:
@@ -667,7 +781,6 @@ async def pointsT(
         if hp_action == "set":
             # 设置血量和最大血量
             session.player_hp[target.id] = value
-            session.max_hp[target.id] = value
             msg = f"已设置 {target.mention} 的血量为 {value}"
 
         elif hp_action == "damage":
@@ -676,15 +789,15 @@ async def pointsT(
                 await interaction.response.send_message(f"请先设置 {target.mention} 的血量!", ephemeral=True)
                 return
             session.player_hp[target.id] = max(0, session.player_hp[target.id] - value)
-            msg = f"{target.mention} 受到 {value} 点伤害，当前血量: {session.player_hp[target.id]}/{session.max_hp[target.id]}"
+            msg = f"{target.mention} 受到 {value} 点伤害，当前血量: {session.player_hp[target.id]}"
 
         elif hp_action == "heal":
             # 恢复血量
             if target.id not in session.player_hp:
                 await interaction.response.send_message(f"请先设置 {target.mention} 的血量!", ephemeral=True)
                 return
-            session.player_hp[target.id] = min(session.max_hp[target.id], session.player_hp[target.id] + value)
-            msg = f"{target.mention} 恢复 {value} 点血量，当前血量: {session.player_hp[target.id]}/{session.max_hp[target.id]}"
+            session.player_hp[target.id] =  session.player_hp[target.id] + value
+            msg = f"{target.mention} 恢复 {value} 点血量，当前血量: {session.player_hp[target.id]}"
         else:
             msg = "错误:需要设置 hp_action"
         await interaction.response.send_message(msg, ephemeral=False)
@@ -715,7 +828,7 @@ async def pointsT(
         # 添加玩家血量显示
         if user_id in session.player_hp and not is_host:
             template_info += f"\n\n=== 当前血量 ===\n"
-            template_info += f"血量: {session.player_hp[user_id]}/{session.max_hp[user_id]}"
+            template_info += f"血量: {session.player_hp[user_id]}"
         if is_host:
             template_info += "\n=== 玩家状态 ===\n"
             for player_id in session.players:
@@ -728,7 +841,7 @@ async def pointsT(
                         for point_name, value in points.items():
                             template_info += f"- {point_name}: {value}\n"
                     if player_id in session.player_hp:
-                        template_info += f"血量: {session.player_hp[player_id]}/{session.max_hp[player_id]}\n"
+                        template_info += f"血量: {session.player_hp[player_id]}\n"
         
         await interaction.response.send_message(template_info, ephemeral=True)
 
@@ -747,6 +860,604 @@ async def randomT(interaction: discord.Interaction, max: int, min: int):
     # 使用 response.send_message 而不是 followup
     await interaction.response.send_message(
         f"{interaction.user.mention} 掷骰结果: {random.randint(min, max)}"
+    )
+
+    
+# 添加基础 UI 视图类
+class BaseTRPGView(View):
+    def __init__(self, session: TRPGSession, user_id: int):
+        super().__init__(timeout=180)
+        self.session = session
+        self.user_id = user_id
+    
+    async def interaction_check(self, interaction: Interaction) -> bool:
+        """检查交互者是否有权限"""
+        return interaction.user.id == self.user_id
+
+class MainMenuView(BaseTRPGView):
+    """主菜单视图"""
+    @discord.ui.button(label="点数管理", style=ButtonStyle.primary)
+    async def points_menu(self, interaction: Interaction, button: Button):
+        await interaction.response.send_message("点数管理面板", view=PointsView(self.session, self.user_id), ephemeral=True)
+
+    @discord.ui.button(label="备忘录", style=ButtonStyle.primary)
+    async def memo_menu(self, interaction: Interaction, button: Button):
+        await interaction.response.send_message("备忘录面板", view=MemoView(self.session, self.user_id), ephemeral=True)
+
+    @discord.ui.button(label="掷骰", style=ButtonStyle.primary)
+    async def roll_menu(self, interaction: Interaction, button: Button):
+        await interaction.response.send_message("掷骰面板", view=RollView(self.session, self.user_id), ephemeral=True)
+    
+    @discord.ui.button(label="玩家管理", style=ButtonStyle.primary)
+    async def player_manage(self, interaction: Interaction, button: Button):
+        if interaction.user.id != self.session.host_id:
+            await interaction.response.send_message("只有主持人才能管理玩家!", ephemeral=True)
+            return
+
+        view = PlayerManageView(self.session)
+        await interaction.response.send_message("玩家管理面板", view=view, ephemeral=True)
+
+class SelectTargetView(BaseTRPGView):
+    def __init__(self, session: TRPGSession):
+        super().__init__(session, session.host_id)
+        self.session = session
+        
+        # 创建玩家选择下拉菜单
+        player_options = [
+            discord.SelectOption(
+                label="自己",
+                value="self",
+                description="对自己进行操作"
+            )
+        ]
+        
+        # 如果是主持人，添加所有玩家选项
+        if self.user_id == session.host_id:
+            for player_id in session.players:
+                if player_id != session.host_id:  # 排除主持人自己
+                    member = self.session.guild.get_member(player_id)
+                    if member:
+                        player_options.append(
+                            discord.SelectOption(
+                                label=member.display_name,
+                                value=str(player_id)
+                            )
+                        )
+        
+        # 添加选择菜单，确保最大宽度为5
+        self.add_item(discord.ui.Select(
+            placeholder="选择目标",
+            custom_id="target_select",
+            options=player_options[:5],  # 限制最大选项数为5
+            row=0
+        ))
+
+class HPManageView(BaseTRPGView):
+    def __init__(self, session: TRPGSession):
+        super().__init__(session, session.host_id)
+        
+        # 创建玩家选择下拉菜单
+        player_options = []
+        for player_id in session.players:
+            if player_id != session.host_id:  # 排除主持人
+                member = self.session.guild.get_member(player_id)
+                if member:
+                    player_options.append(
+                        discord.SelectOption(
+                            label=member.display_name,
+                            value=str(player_id)
+                        )
+                    )
+        
+        # 确保至少有一个选项
+        if not player_options:
+            player_options = [
+                discord.SelectOption(
+                    label="无可选玩家",
+                    value="none",
+                    description="当前没有可管理的玩家"
+                )
+            ]
+        
+        # 限制选项数量，分页显示
+        self.add_item(discord.ui.Select(
+            placeholder="选择玩家",
+            custom_id="player_select",
+            options=player_options[:5],  # 限制每页最多5个选项
+            row=0
+        ))
+class PointsView(BaseTRPGView):
+    """点数管理视图"""
+    def __init__(self, session: TRPGSession, user_id: int):
+        super().__init__(session, user_id)
+
+    @discord.ui.button(label="查看状态", style=ButtonStyle.primary)
+    async def view_status(self, interaction: Interaction, button: Button):
+        # 使用 list 功能的逻辑
+        if not hasattr(self.session, 'total_points'):
+            await interaction.response.send_message("主持人还未设置总点数!", ephemeral=True)
+            return
+        
+        template_info = "=== 点数模板 ===\n"
+        template_info += f"总点数: {self.session.total_points}\n"
+        template_info += "可用点数项目:\n"
+        for point_name in self.session.points_template.keys():
+            template_info += f"- {point_name}\n"
+        
+        user_id = interaction.user.id
+        if user_id in self.session.player_points:
+            current_points = self.session.player_points[user_id]
+            total_assigned = sum(current_points.values())
+            template_info += "\n=== 当前分配 ===\n"
+            for point_name, value in current_points.items():
+                template_info += f"{point_name}: {value}\n"
+            template_info += f"\n已分配: {total_assigned}"
+            template_info += f"\n剩余: {self.session.total_points - total_assigned}"
+        
+        if user_id in self.session.player_hp:
+            template_info += f"\n\n=== 当前血量 ===\n"
+            template_info += f"血量: {self.session.player_hp[user_id]}"
+            
+        await interaction.response.send_message(template_info, ephemeral=True)
+
+    @discord.ui.button(label="设置总点数", style=ButtonStyle.primary)
+    async def set_total(self, interaction: Interaction, button: Button):
+        if interaction.user.id != self.session.host_id:
+            await interaction.response.send_message("只有主持人才能设置总点数!", ephemeral=True)
+            return
+        modal = TotalPointsModal(self.session)
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(label="设置点数项目", style=ButtonStyle.primary)
+    async def set_point(self, interaction: Interaction, button: Button):
+        if interaction.user.id != self.session.host_id:
+            await interaction.response.send_message("只有主持人才能设置点数项目!", ephemeral=True)
+            return
+        modal = PointItemModal(self.session)
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(label="分配点数", style=ButtonStyle.primary)
+    async def assign_points(self, interaction: Interaction, button: Button):
+        view = SelectTargetView(self.session)
+        await interaction.response.send_message(
+            "请选择要分配点数的目标：",
+            view=view,
+            ephemeral=True
+        )
+
+    @discord.ui.button(label="血量管理", style=ButtonStyle.primary)
+    async def manage_hp(self, interaction: Interaction, button: Button):
+        if interaction.user.id != self.session.host_id:
+            await interaction.response.send_message("只有主持人才能管理血量!", ephemeral=True)
+            return
+        view = HPManageView(self.session)
+        await interaction.response.send_message("血量管理面板", view=view, ephemeral=True)
+
+# 添加新的 Modal 类
+class TotalPointsModal(discord.ui.Modal):
+    def __init__(self, session: TRPGSession):
+        super().__init__(title="设置总点数")
+        self.session = session
+        self.value = discord.ui.TextInput(
+            label="总点数",
+            placeholder="请输入总点数值"
+        )
+        self.add_item(self.value)
+
+    async def on_submit(self, interaction: Interaction):
+        try:
+            value = int(self.value.value)
+            self.session.total_points = value
+            await interaction.response.send_message(
+                f"已设置总点数为: {value}",
+                ephemeral=False
+            )
+        except ValueError:
+            await interaction.response.send_message("请输入有效的数字!", ephemeral=True)
+
+class PointItemModal(discord.ui.Modal):
+    def __init__(self, session: TRPGSession):
+        super().__init__(title="设置点数项目")
+        self.session = session
+        self.point_name = discord.ui.TextInput(
+            label="项目名称",
+            placeholder="请输入点数项目名称"
+        )
+        self.add_item(self.point_name)
+
+    async def on_submit(self, interaction: Interaction):
+        name = self.point_name.value
+        self.session.points_template[name] = 0
+        await interaction.response.send_message(
+            f"已添加点数项目: {name}",
+            ephemeral=False
+        )
+class HPManageView(BaseTRPGView):
+    def __init__(self, session: TRPGSession):
+        super().__init__(session, session.host_id)
+        
+        # 添加玩家选择下拉菜单
+        player_options = []
+        for player_id in self.session.players:
+            player_options.append(
+                discord.SelectOption(
+                    label=f"<@{player_id}>",
+                    value=str(player_id)
+                )
+            )
+        
+        self.add_item(discord.ui.Select(
+            placeholder="选择玩家",
+            custom_id="player_select",
+            options=player_options
+        ))
+
+    @discord.ui.button(label="设置血量", style=ButtonStyle.primary)
+    async def set_hp(self, interaction: Interaction, button: Button):
+        modal = HPSetModal(self.session)
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(label="扣除血量", style=ButtonStyle.danger)
+    async def damage_hp(self, interaction: Interaction, button: Button):
+        modal = HPModifyModal(self.session, "damage")
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(label="恢复血量", style=ButtonStyle.success)
+    async def heal_hp(self, interaction: Interaction, button: Button):
+        modal = HPModifyModal(self.session, "heal")
+        await interaction.response.send_modal(modal)
+class HPManageView(BaseTRPGView):
+    def __init__(self, session: TRPGSession):
+        super().__init__(session, session.host_id)
+        
+        # 创建玩家选择下拉菜单
+        player_options = []
+        for player_id in session.players:
+            if player_id != session.host_id:  # 排除主持人
+                member = bot.get_channel(self.session.channel_id).members
+                for n in member:
+                    if n:
+                        player_options.append(
+                            discord.SelectOption(
+                                label=n.display_name,
+                                value=str(player_id)
+                            )
+                        )
+        
+        # 确保至少有一个选项
+        if not player_options:
+            player_options = [
+                discord.SelectOption(
+                    label="无可选玩家",
+                    value="none",
+                    description="当前没有可管理的玩家"
+                )
+            ]
+        
+        # 限制选项数量，分页显示
+        self.add_item(discord.ui.Select(
+            placeholder="选择玩家",
+            custom_id="player_select",
+            options=player_options[:4],  # 限制每页最多5个选项
+        ))
+
+    @discord.ui.button(label="血量管理", style=ButtonStyle.primary)
+    async def manage_hp(self, interaction: Interaction, button: Button):
+        if interaction.user.id != self.session.host_id:
+            await interaction.response.send_message("只有主持人才能管理血量!", ephemeral=True)
+            return
+            
+        # 检查是否有玩家可管理
+        has_players = any(pid != self.session.host_id for pid in self.session.players)
+        if not has_players:
+            await interaction.response.send_message("当前没有可管理的玩家!", ephemeral=True)
+            return
+            
+        view = HPManageView(self.session)
+        await interaction.response.send_message("血量管理面板", view=view, ephemeral=True)
+
+    @discord.ui.button(label="扣除血量", style=ButtonStyle.danger, row=1)
+    async def damage_hp(self, interaction: Interaction, button: Button):
+        select = [item for item in self.children if isinstance(item, discord.ui.Select)][0]
+        if not select.values:
+            await interaction.response.send_message("请先选择一个玩家!", ephemeral=True)
+            return
+        modal = HPModifyModal(self.session, "damage", int(select.values[0]))
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(label="恢复血量", style=ButtonStyle.success, row=1)
+    async def heal_hp(self, interaction: Interaction, button: Button):
+        select = [item for item in self.children if isinstance(item, discord.ui.Select)][0]
+        if not select.values:
+            await interaction.response.send_message("请先选择一个玩家!", ephemeral=True)
+            return
+        modal = HPModifyModal(self.session, "heal", int(select.values[0]))
+        await interaction.response.send_modal(modal)
+class HPSetModal(discord.ui.Modal):
+    def __init__(self, session: TRPGSession, target_id: int):
+        super().__init__(title="设置血量")
+        self.session = session
+        self.target_id = target_id
+        self.value = discord.ui.TextInput(label="血量值")
+        self.add_item(self.value)
+class HPModifyModal(discord.ui.Modal):
+    def __init__(self, session: TRPGSession, action: str, target_id: int):
+        super().__init__(title=f"{'扣除' if action == 'damage' else '恢复'}血量")
+        self.session = session
+        self.action = action
+        self.target_id = target_id
+        self.value = discord.ui.TextInput(label="数值")
+        self.add_item(self.value)
+class PlayerManageView(BaseTRPGView):
+    def __init__(self, session: TRPGSession):
+        super().__init__(session, session.host_id)
+        self.update_player_select(bot.get_channel(session.channel_id).guild)
+
+    def update_player_select(self,guild: discord.Guild):
+        """更新玩家选择下拉菜单"""
+        # 如果已经有选择菜单,先移除
+        if self._has_select:
+            self.remove_item(self.children[0])
+        
+        # 创建玩家选择下拉菜单
+        player_options = []
+        for player_id in self.session.players:
+            member = guild.get_member(player_id)
+            if member:
+                player_options.append(
+                    discord.SelectOption(
+                        label=member.display_name,
+                        value=str(member.id)
+                    )
+                )
+        
+        select = discord.ui.Select(
+            placeholder="选择玩家",
+            options=player_options
+        )
+        self.add_item(select)
+        self._has_select = True
+
+    @discord.ui.button(label="踢出玩家", style=ButtonStyle.danger)
+    async def kick_player(self, interaction: Interaction, button: Button):
+        if not self._has_select:
+            await self.update_player_select(interaction.guild)
+        # 获取选中的玩家
+        selected = self.children[0].values[0] if self.children[0].values else None
+        if interaction.user.id != self.session.host_id:
+            await interaction.response.send_message("只有主持人才能踢出玩家!", ephemeral=True)
+            return
+        if not selected:
+            await interaction.response.send_message("请先选择一个玩家!", ephemeral=True)
+            return
+        
+        target_id = int(selected)
+        if target_id == self.session.host_id:
+            await interaction.response.send_message("不能踢出主持人!", ephemeral=True)
+            return
+
+        # 踢出玩家
+        self.session.players.remove(target_id)
+        await interaction.response.send_message(
+            f"已将 <@{target_id}> 踢出跑团!",
+            ephemeral=False
+        )
+        self.update_player_select()
+
+    @discord.ui.button(label="查看玩家列表", style=ButtonStyle.primary)
+    async def list_players(self, interaction: Interaction, button: Button):
+        if not self._has_select:
+            await self.update_player_select(interaction.guild)
+        player_list = "\n".join([f"- <@{player_id}>" for player_id in self.session.players])
+        await interaction.response.send_message(
+            f"当前玩家列表:\n{player_list}",
+            ephemeral=True
+        )
+class SelectTargetView(BaseTRPGView):
+    def __init__(self, session: TRPGSession):
+        super().__init__(session, session.host_id)
+        self.session = session
+
+        # 创建玩家选择下拉菜单
+        player_options = [
+            discord.SelectOption(
+                label="自己",
+                value="self",
+                description="对自己进行操作"
+            )
+        ]
+
+        # 如果是主持人，添加所有玩家选项
+        if self.user_id == session.host_id:
+            for player_id in session.players:
+                    member = self.session.guild.get_member(player_id)
+                    if member:
+                        player_options.append(
+                            discord.SelectOption(
+                                label=member.display_name,
+                                value=str(player_id)
+                            )
+                        )
+
+        # 确保至少有一个选项
+        if not player_options:
+            player_options = [
+                discord.SelectOption(
+                    label="无可选玩家",
+                    value="none",
+                    description="当前没有可管理的玩家"
+                )
+            ]
+
+        self.add_item(discord.ui.Select(
+            placeholder="选择目标",
+            custom_id="target_select",
+            options=player_options[:5],  # 限制最大选项数为5
+            row=0
+        ))
+class PointsAssignModal(discord.ui.Modal):
+    def __init__(self, session: TRPGSession, target_id: int):
+        super().__init__(title="分配点数")
+        self.session = session
+        self.target_id = target_id
+
+        # 创建点数名称下拉列表
+        point_options = [
+            discord.SelectOption(label=name, value=name)
+            for name in self.session.points_template.keys()
+        ]
+        if not point_options:
+            point_options = [discord.SelectOption(label="无可用点数", value="none")]
+
+        self.point_name = discord.ui.Select(
+            placeholder="选择点数名称",
+            options=point_options
+        )
+        self.value = discord.ui.TextInput(label="点数值", placeholder="请输入点数值")
+        self.add_item(self.point_name)
+        self.add_item(self.value)
+
+    async def on_submit(self, interaction: Interaction):
+        try:
+            point_name = self.point_name.values[0]
+            if point_name == "none":
+                await interaction.response.send_message("当前没有可用的点数项目!", ephemeral=True)
+                return
+
+            value = int(self.value.value)
+            is_host = interaction.user.id == self.session.host_id
+
+            if not point_name or value is None:
+                await interaction.response.send_message("请指定点数名称和值!", ephemeral=True)
+                return
+
+            if point_name not in self.session.points_template:
+                await interaction.response.send_message(f"点数项目 {point_name} 不存在!", ephemeral=True)
+                return
+
+            # 获取目标用户
+            target = interaction.guild.get_member(self.target_id)
+            if not target:
+                await interaction.response.send_message("找不到目标用户!", ephemeral=True)
+                return
+
+            target_mention = target.mention
+
+            if self.target_id not in self.session.player_points:
+                self.session.player_points[self.target_id] = {}
+
+            # 计算当前已分配的总点数
+            current_total = sum(self.session.player_points[self.target_id].values())
+            new_total = current_total - self.session.player_points[self.target_id].get(point_name, 0) + value
+
+            if new_total > getattr(self.session, 'total_points', 0):
+                await interaction.response.send_message(
+                    f"分配失败：总点数不能超过 {self.session.total_points}\n"
+                    f"当前已分配: {current_total}\n"
+                    f"本次将增加: {value - self.session.player_points[self.target_id].get(point_name, 0)}",
+                    ephemeral=True
+                )
+                return
+
+            self.session.player_points[self.target_id][point_name] = value
+
+            # 构建剩余点数信息
+            remaining = self.session.total_points - new_total
+
+            # 如果是主持人为其他人分配，则公开显示
+            is_public_message = self.target_id != interaction.user.id and is_host
+
+            await interaction.response.send_message(
+                f"已为 {target_mention} 设置 {point_name}: {value}\n"
+                f"已分配总点数: {new_total}\n"
+                f"剩余可分配: {remaining}",
+                ephemeral=not is_public_message
+            )
+        except ValueError:
+            await interaction.response.send_message("点数值必须是有效的数字!", ephemeral=True)
+
+
+class MemoView(BaseTRPGView):
+    """备忘录视图"""
+    @discord.ui.button(label="写备忘", style=ButtonStyle.primary)
+    async def write_memo(self, interaction: Interaction, button: Button):
+        modal = MemoWriteModal(self.session)
+        await interaction.response.send_modal(modal)
+
+    @discord.ui.button(label="读备忘", style=ButtonStyle.primary)
+    async def read_memo(self, interaction: Interaction, button: Button):
+        memos = self.session.personal_memos.get(self.user_id, [])
+        memo_list = "\n".join([f"{i+1}. {memo}" for i, memo in enumerate(memos)])
+        await interaction.response.send_message(f"===== 个人备忘录 =====\n{memo_list}", ephemeral=True)
+
+class RollView(BaseTRPGView):
+    """掷骰视图"""
+    @discord.ui.button(label="D20", style=ButtonStyle.primary)
+    async def roll_d20(self, interaction: Interaction, button: Button):
+        result = random.randint(1, 20)
+        await interaction.response.send_message(f"{interaction.user.mention} D20: {result}")
+
+    @discord.ui.button(label="D100", style=ButtonStyle.primary)
+    async def roll_d100(self, interaction: Interaction, button: Button):
+        result = random.randint(1, 100)
+        await interaction.response.send_message(f"{interaction.user.mention} D100: {result}")
+
+    @discord.ui.button(label="自定义", style=ButtonStyle.primary)
+    async def roll_custom(self, interaction: Interaction, button: Button):
+        modal = RollCustomModal()
+        await interaction.response.send_modal(modal)
+
+# 添加模态框类
+
+class MemoWriteModal(discord.ui.Modal):
+    def __init__(self, session: TRPGSession):
+        super().__init__(title="写备忘")
+        self.session = session
+        self.content = discord.ui.TextInput(label="备忘内容", style=discord.TextStyle.paragraph)
+        self.add_item(self.content)
+
+    async def on_submit(self, interaction: Interaction):
+        if interaction.user.id not in self.session.personal_memos:
+            self.session.personal_memos[interaction.user.id] = []
+        self.session.personal_memos[interaction.user.id].append(self.content.value)
+        await interaction.response.send_message(f"已记录备忘: {self.content.value}", ephemeral=True)
+
+class RollCustomModal(discord.ui.Modal):
+    def __init__(self):
+        super().__init__(title="掷骰")
+        self.min_value = discord.ui.TextInput(label="最小值", placeholder="1")
+        self.max_value = discord.ui.TextInput(label="最大值", placeholder="100")
+        self.add_item(self.min_value)
+        self.add_item(self.max_value)
+
+    async def on_submit(self, interaction: Interaction):
+        try:
+            min_val = int(self.min_value.value)
+            max_val = int(self.max_value.value)
+            if max_val < min_val:
+                max_val, min_val = min_val, max_val
+            result = random.randint(min_val, max_val)
+            await interaction.response.send_message(
+                f"{interaction.user.mention} D{max_val}-{min_val}: {result}"
+            )
+        except ValueError:
+            await interaction.response.send_message("请输入有效的数字!", ephemeral=True)
+            
+@group.command(name="menu", description="打开TRPG菜单")
+async def menuT(interaction: discord.Interaction):
+    """打开TRPG主菜单"""
+    session = None
+    for n,k in bot.trpg_sessions.items():
+        if interaction.channel_id == k.channel_id:
+            session = k
+    if session is None:
+        await interaction.response.send_message("未发现加入的跑团!", ephemeral=True)
+        return
+
+    await interaction.response.send_message(
+        "TRPG 主菜单",
+        view=MainMenuView(session, interaction.user.id),
+        ephemeral=True
     )
 bot.tree.add_command(group)
 bot.run(my_bot_token)

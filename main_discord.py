@@ -1392,9 +1392,10 @@ class SelectTargetView(BaseTRPGView):
 
 
     async def confirm_points(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         """确认分配点数"""
         if not self.selected:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "请先选择一个目标!",
                 ephemeral=True
             )
@@ -1411,14 +1412,14 @@ class SelectTargetView(BaseTRPGView):
             )
 
         if not point_options:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "当前没有可用的点数项目!",
                 ephemeral=True
             )
             return
 
         view = PointsAssignView(self.session, self.selected, point_options)
-        await interaction.response.edit_message(
+        await interaction.followup.send(
             content=f"请为 <@{self.selected}> 分配点数：",
             view=view
         )
@@ -1429,6 +1430,7 @@ class PointsAssignView(BaseTRPGView):
             placeholder="选择点数项目",
             options=point_options,
         )
+        self.target_id = target_id
         self.point_select.callback = self.point_select_callback  # 确保回调函数绑定
         self.add_item(self.point_select)
 
@@ -1441,11 +1443,11 @@ class PointsAssignView(BaseTRPGView):
         self.add_item(assign_button)
         
     async def point_select_callback(self, interaction: discord.Interaction):
-        if not self.select.values:
+        if not self.point_select.values:
             await interaction.response.send_message("请选择一个目标!", ephemeral=True)
             return
 
-        selected_value = self.select.values[0]
+        selected_value = self.point_select.values[0]
         await interaction.response.send_message(f"已选择目标：{selected_value}", ephemeral=True)
 
 
@@ -1580,8 +1582,8 @@ async def menuT(interaction: discord.Interaction):
         view=MainMenuView(session, interaction.user.id),
         ephemeral=True
     )
-@bot.event
-async def on_error(event_method, *args, **kwargs):
-    print(f"错误出现在 {event_method}：{args}, {kwargs}")
+# @bot.event
+# async def on_error(event_method, *args, **kwargs):
+#     print(f"错误出现在 {event_method}：{args}, {kwargs}")
 bot.tree.add_command(group)
 bot.run(my_bot_token)

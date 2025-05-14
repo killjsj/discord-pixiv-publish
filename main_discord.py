@@ -219,11 +219,48 @@ async def setu(interaction: discord.Interaction, r18: str, num: int = 1, tags0: 
 
             temp_filename = f"temp_{uuid.uuid4()}.jpg"
             print(f"下载图片: {image_url}")
-
+            max_retries = 4
+            retry_count = 0
             # 下载图片
-            if not await download_image(image_url, temp_filename):
-                print(f"图片下载失败: {image_url}")
-                continue
+            while retry_count < max_retries:
+                if await download_image(image_url, temp_filename):
+                    print(f"图片下载成功: {image_url}")
+                    break
+                else:
+                    print(f"图片下载失败: {image_url}，重试次数: {retry_count + 1}")
+                    retry_count += 1
+
+                    # 如果达到最大重试次数，切换到 API 2
+                    if retry_count == max_retries:
+                        print("切换到 API 2 获取新图片...")
+                        response_api_2 = requests.get(api_url_2, params=params_2)
+                        response_api_2.raise_for_status()
+                        new_image_data = response_api_2.json()
+                        if new_image_data:
+                            image = new_image_data[0]  # 获取新图片
+                            image_url = image.get("url")
+                            retry_count = 0  # 重置重试计数
+                        else:
+                            print("API 2 没有返回有效图片，跳过当前图片")
+                            break
+
+            if retry_count == max_retries:
+                embed = discord.Embed(title=f"下载图片错误：")
+                a = ""
+                if image.get("author", "") != "":
+                    a = image.get("author", "")
+                elif image.get("user", "") != "":
+                    a = image.get("user", "")
+                else:
+                    a = "未知"
+                embed.add_field(name="标题", value=image.get("title", "未知"), inline=True)
+                embed.add_field(name="作者", value=a, inline=True)
+                embed.add_field(name="PID", value=image.get("pid", "未知"), inline=True)
+                embed.add_field(name="标签", value=", ".join(image.get("tags", [])), inline=False)
+                embed.add_field(name="URL", value=image_url, inline=False)
+                embed.add_field(name="重试次数:", value=retry_count, inline=False)
+                await interaction.followup.send(embed=embed, ephemeral=True)
+                continue  # 跳过当前图片
 
             try:
                 # 检查文件大小，超限则压缩
@@ -239,21 +276,38 @@ async def setu(interaction: discord.Interaction, r18: str, num: int = 1, tags0: 
                 file = discord.File(temp_filename)
                 embed = discord.Embed(title=f"Pixiv Image")
                 embed.add_field(name="标题", value=image.get("title", "未知"), inline=True)
-                a = image.get("user", "未知")
+                a = ""
+                if image.get("author", "") != "":
+                    a = image.get("author", "")
+                elif image.get("user", "") != "":
+                    a = image.get("user", "")
+                else:
+                    a = "未知"
                 embed.add_field(name="作者", value=a, inline=True)
                 embed.add_field(name="PID", value=image.get("pid", "未知"), inline=True)
                 embed.add_field(name="标签", value=", ".join(image.get("tags", [])), inline=False)
                 embed.add_field(name="URL", value=image_url, inline=False)
+                embed.add_field(name="重试次数:", value=retry_count, inline=False)
+                
                 embed.set_image(url=f"attachment://{os.path.basename(temp_filename)}")
                 await interaction.followup.send(file=file, embed=embed, ephemeral=public)
                 os.remove(temp_filename)
             except Exception as e:
                 embed = discord.Embed(title=f"上传图片错误：{str(e)}")
+                a = ""
+                if image.get("author", "") != "":
+                    a = image.get("author", "")
+                elif image.get("user", "") != "":
+                    a = image.get("user", "")
+                else:
+                    a = "未知"
                 embed.add_field(name="标题", value=image.get("title", "未知"), inline=True)
-                embed.add_field(name="作者", value=image.get("user", "未知"), inline=True)
+                embed.add_field(name="作者", value=a, inline=True)
                 embed.add_field(name="PID", value=image.get("pid", "未知"), inline=True)
                 embed.add_field(name="标签", value=", ".join(image.get("tags", [])), inline=False)
                 embed.add_field(name="URL", value=image_url, inline=False)
+                embed.add_field(name="重试次数:", value=retry_count, inline=False)
+                
                 await interaction.followup.send(embed=embed, ephemeral=True)
                 os.remove(temp_filename)
 

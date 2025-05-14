@@ -1,4 +1,5 @@
 import asyncio
+import json
 import time
 from typing import Dict, List, Optional, Set
 from PIL import Image
@@ -6,7 +7,7 @@ import uuid
 import aiofiles
 import aiohttp
 import discord
-from discord import Button, ButtonStyle, Interaction, Member, NSFWLevel, app_commands
+from discord import Button, ButtonStyle, Interaction, Member, NSFWLevel, SoundboardSound, app_commands
 from discord.ui import Button, View
 import requests
 import os
@@ -34,6 +35,9 @@ class MyBot(discord.Client):
         # 同步斜杠命令
         await self.tree.sync()
         print("Commands synced!")
+        
+        # 创建定时任务
+        self.loop.create_task(check_bed_time())
 
     def check_rate_limit(self, user_id: int) -> tuple[bool, float]:
         """
@@ -134,12 +138,13 @@ async def setu(interaction: discord.Interaction, r18: str, num: int = 1, tags0: 
             "yes": 1,
             "random": 2
         }.get(r18, 2)
-    if not interaction.channel.is_nsfw():
-            if r18_param == 1:
-                    await interaction.followup.send("不准在非r18里色色!",ephemeral=True)
-                    return
-            elif r18_param == 2:
-                r18_param = 0
+    if interaction.channel.type != discord.ChannelType.private or type(interaction.channel) != discord.DMChannel:
+        if not interaction.channel.is_nsfw():
+                if r18_param == 1:
+                        await interaction.followup.send("不准在非r18里色色!",ephemeral=True)
+                        return
+                elif r18_param == 2:
+                    r18_param = 0
     params_1 = {
         "r18": r18_param,
         "num": max(1, min(num, 20)),  # 限制 num 在 1 到 20 之间
@@ -171,8 +176,6 @@ async def setu(interaction: discord.Interaction, r18: str, num: int = 1, tags0: 
             response_api_1.raise_for_status()
             image_data = response_api_1.json().get("data", [])
         elif api == 1:
-            print(f"API 2 {params_2}")
-            
             # 只使用 API 2
             response_api_2 = requests.get(api_url_2, params=params_2)
             response_api_2.raise_for_status()
@@ -185,73 +188,42 @@ async def setu(interaction: discord.Interaction, r18: str, num: int = 1, tags0: 
                 image_data = response_api_1.json().get("data", [])
             except requests.exceptions.RequestException as e:
                 print(f"API 1 请求失败: {e}")
-            
-            # 如果 API 1 没有找到图片，尝试使用 API 2
+
+            # 如果 API 1 没有找到图片或返回 404，尝试使用 API 2
             if not image_data:
                 print("API 1 没有找到符合条件的图片，尝试使用 API 2")
-                response_api_2 = requests.get(api_url_2, params=params_2)
-                print(f"API 2 {params_2}")
-                response_api_2.raise_for_status()
-                image_data = response_api_2.json()
+                retry_count = 0
+                while retry_count < 4:
+                    response_api_2 = requests.get(api_url_2, params=params_2)
+                    print(f"API 2 请求参数: {params_2}")
+                    if response_api_2.status_code == 404:
+                        print(f"API 2 返回 404，重试次数: {retry_count + 1}")
+                        retry_count += 1
+                        continue
+                    response_api_2.raise_for_status()
+                    image_data = response_api_2.json()
+                    if image_data:
+                        break
 
         # 处理图片数据
         if not image_data:
             await interaction.followup.send("没有找到符合条件的图片", ephemeral=True)
             return
-        # print(f"image_data: {image_data}")
+
+        print(f"image_data: {image_data}")
         for image in image_data:
-            # 优先从 im2 获取 original URL
-            im2 = image.get("urls", {})
-            image_url = im2.get("original")
-
-            # 如果 original URL 不存在，则尝试从 image 的 url 字段获取
+            image_url = image.get("url")
             if not image_url or not isinstance(image_url, str):
-                # print(f"无效的图片 URL: {image_url}")
-                image_url = image.get("url")
-                # print(f"下载图片2: {image_url}")
-
-            # 如果仍然无效，跳过该图片
-            if not image_url or not isinstance(image_url, str):
-                print(f"无效的图片 URL，跳过: {image_url}")
+                print(f"无效的图片 URL: {image_url}")
                 continue
 
             temp_filename = f"temp_{uuid.uuid4()}.jpg"
-            # print(f"下载图片: {image_url}")
+            print(f"下载图片: {image_url}")
 
             # 下载图片
             if not await download_image(image_url, temp_filename):
-                # 如果下载失败，尝试使用 num=1 再次请求
-                print(f"图片下载失败，尝试重新请求: {image_url}")
-                params_1["num"] = 1
-                params_2["num"] = 1
-                retry_data = []
-
-                if api in [0, 2]:
-                    try:
-                        response_api_1 = requests.post(api_url_1, json=params_1)
-                        response_api_1.raise_for_status()
-                        retry_data = response_api_1.json().get("data", [])
-                    except Exception as e:
-                        print(f"API 1 重试失败: {e}")
-
-                if api in [1, 2] and not retry_data:
-                    try:
-                        response_api_2 = requests.get(api_url_2, params=params_2)
-                        response_api_2.raise_for_status()
-                        retry_data = response_api_2.json()
-                    except Exception as e:
-                        print(f"API 2 重试失败: {e}")
-
-                if retry_data:
-                    image = retry_data[0]
-                    image_url = image.get("url")
-                    if not image_url or not isinstance(image_url, str):
-                        print(f"无效的图片 URL: {image_url}")
-                        continue
-
-                    if not await download_image(image_url, temp_filename):
-                        await interaction.followup.send(f"图片下载失败: {image_url}", ephemeral=True)
-                        continue
+                print(f"图片下载失败: {image_url}")
+                continue
 
             try:
                 # 检查文件大小，超限则压缩
@@ -261,19 +233,13 @@ async def setu(interaction: discord.Interaction, r18: str, num: int = 1, tags0: 
                         await interaction.followup.send("图片过大且压缩失败", ephemeral=True)
                         os.remove(temp_filename)
                         continue
-                    temp_filename = compressed_filename  # 使用压缩后的文件名
+                    temp_filename = compressed_filename
 
                 # 上传图片
                 file = discord.File(temp_filename)
                 embed = discord.Embed(title=f"Pixiv Image")
                 embed.add_field(name="标题", value=image.get("title", "未知"), inline=True)
-                a = ""
-                if image.get("author", "") != "":
-                    a = image.get("author", "")
-                elif image.get("user", "") != "":
-                    a = image.get("user", "")
-                else:
-                    a = "未知"
+                a = image.get("user", "未知")
                 embed.add_field(name="作者", value=a, inline=True)
                 embed.add_field(name="PID", value=image.get("pid", "未知"), inline=True)
                 embed.add_field(name="标签", value=", ".join(image.get("tags", [])), inline=False)
@@ -283,25 +249,16 @@ async def setu(interaction: discord.Interaction, r18: str, num: int = 1, tags0: 
                 os.remove(temp_filename)
             except Exception as e:
                 embed = discord.Embed(title=f"上传图片错误：{str(e)}")
-                a = ""
-                if image.get("author", "") != "":
-                    a = image.get("author", "")
-                elif image.get("user", "") != "":
-                    a = image.get("user", "")
-                else:
-                    a = "未知"
-                embed.add_field(name="作者", value=a, inline=True)
+                embed.add_field(name="标题", value=image.get("title", "未知"), inline=True)
+                embed.add_field(name="作者", value=image.get("user", "未知"), inline=True)
                 embed.add_field(name="PID", value=image.get("pid", "未知"), inline=True)
                 embed.add_field(name="标签", value=", ".join(image.get("tags", [])), inline=False)
                 embed.add_field(name="URL", value=image_url, inline=False)
                 await interaction.followup.send(embed=embed, ephemeral=True)
-                try:
-                    os.remove(temp_filename)
-                except Exception as remove_error:
-                    print(f"删除文件失败：{remove_error}")
+                os.remove(temp_filename)
+
     except requests.exceptions.RequestException as e:
-        embed = discord.Embed(title=f"api请求失败: {str(e)}")
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        await interaction.followup.send(f"API 请求失败: {str(e)}", ephemeral=True)
     except Exception as e:
         embed = discord.Embed(title=f"Exception as e: {str(e)}")
         await interaction.followup.send(embed=embed, ephemeral=True)
@@ -1627,5 +1584,175 @@ async def menuT(interaction: discord.Interaction):
 # @bot.event
 # async def on_error(event_method, *args, **kwargs):
 #     print(f"错误出现在 {event_method}：{args}, {kwargs}")
+config = {}
+if not os.path.exists('config_discord.json'):
+    with open('config_discord.json', 'w') as f:
+        json.dump({}, f)
+
+
+
+async def bed_not_comfortable(id):
+    with open('config_discord.json', 'r+') as f:
+        config = json.load(f)
+    config_guild = config.get(str(id))
+    if config_guild is None:
+        return
+    # print(f"guild:{id} + {config_guild} time:{time.localtime().tm_hour}:{time.localtime().tm_min}")
+    if time.localtime().tm_hour == int(config_guild["hour_to_wake_up"]) and time.localtime().tm_min == int(config_guild["minute_to_wake_up"]):
+        if config_guild.get("pass",False) is False:
+            voice_channel = bot.get_channel(config_guild["channel_id"])
+            if voice_channel and isinstance(voice_channel, discord.VoiceChannel):
+                if voice_channel.members == []:
+                    return
+                
+                vc = await voice_channel.connect()
+                for file in config_guild["audio_files"]:
+                    vc.play(discord.FFmpegPCMAudio(file))
+                    while vc.is_playing():
+                        await asyncio.sleep(1)
+                await vc.disconnect()
+
+async def check_bed_time():
+    await bot.wait_until_ready()
+    while not bot.is_closed():
+        # print("check!")
+        for guild in bot.guilds:
+            # print(f"checking:{guild.id}")
+            if time.localtime().tm_hour == 12:
+                config[str(guild.id)]["pass"] = False
+            await bed_not_comfortable(guild.id)
+            
+        await asyncio.sleep(30)  # 每1分钟检查一次
+
+bed = app_commands.Group(name="bed", description="神秘闹钟")
+
+@bed.command(name="setbedtime", description="设置闹钟时间和音频")
+@app_commands.describe(
+    time_to_wake_up="闹钟时间(HH:MM 格式)",
+    channel_id="频道ID",
+    audio_files='音频文件列表(机器人本地, ","分割)'
+)
+async def setbedtime(interaction: discord.Interaction, time_to_wake_up: str, channel_id: discord.VoiceChannel, audio_files: str):
+    """设置闹钟时间和音频"""
+    guild_id = interaction.guild_id
+    if guild_id is None:
+        await interaction.response.send_message("此命令只能在服务器中使用!", ephemeral=True)
+        return
+    if interaction.user.guild_permissions.administrator is False:
+        await interaction.response.send_message("你没有权限使用此命令!", ephemeral=True)
+        return
+
+    # 验证时间格式
+    try:
+        hour, minute = map(int, time_to_wake_up.split(":"))
+        if not (0 <= hour < 24 and 0 <= minute < 60):
+            raise ValueError
+    except ValueError:
+        await interaction.response.send_message("时间格式无效，请使用 HH:MM 格式!", ephemeral=True)
+        return
+
+    # 解析音频文件列表
+    audio_files_list = [file.strip() for file in audio_files.split(",")]
+    for file in audio_files_list:
+        if not os.path.exists(file):
+            await interaction.response.send_message(f"音频文件 {file} 不存在!", ephemeral=True)
+            return
+
+    # 更新配置
+    config[str(guild_id)] = {
+        "hour_to_wake_up": hour,
+        "minute_to_wake_up": minute,
+        "channel_id": channel_id.id,
+        "audio_files": audio_files_list,
+        "pass": False
+    }
+
+    # 保存到文件
+    with open('config_discord.json', 'w') as f:
+        save_c = json.dumps(config, indent=4)
+        f.write(save_c)
+        print(save_c)
+
+    await interaction.response.send_message(
+        f"闹钟已设置:\n时间: {time_to_wake_up}\n频道: {channel_id.mention}\n音频文件: {', '.join(audio_files_list)}",
+    )
+
+@bed.command(name="clearbedtime", description="取消本频道闹钟")
+async def clear_all_bedtime(interaction: discord.Interaction):
+    """取消闹钟"""
+    guild_id = interaction.guild_id
+    if guild_id is None:
+        await interaction.response.send_message("此命令只能在服务器中使用!", ephemeral=True)
+        return
+    if interaction.user.guild_permissions.administrator is False:
+        await interaction.response.send_message("你没有权限使用此命令!", ephemeral=True)
+        return
+    # 更新配置
+    config[str(guild_id)] = {}
+
+    # 保存到文件
+    with open('config_discord.json', 'w') as f:
+        json.dump(config, f, indent=4)
+
+    await interaction.response.send_message("闹钟已清除")
+
+@bed.command(name="passbedtime", description="暂时跳过本频道闹钟(12:00点重置)")
+async def pass_bedtime(interaction: discord.Interaction):
+    """跳过闹钟"""
+    guild_id = interaction.guild_id
+    if guild_id is None:
+        await interaction.response.send_message("此命令只能在服务器中使用!", ephemeral=True)
+        return
+    # 更新配置
+    try:
+        config[str(guild_id)]["pass"] = not config[str(guild_id)].get("pass", False)
+    except KeyError:
+        await interaction.response.send_message("未设置闹钟!", ephemeral=True)
+        return
+
+    # 保存到文件
+    with open('config_discord.json', 'w') as f:
+        json.dump(config, f, indent=4)
+
+    await interaction.response.send_message("闹钟已跳过")
+
+@bed.command(name="timeforbed", description="直接触发闹钟(管理限定)")
+async def timeforbed(interaction: discord.Interaction):
+    """直接触发闹钟"""
+    guild_id = interaction.guild_id
+    if guild_id is None:
+        await interaction.response.send_message("此命令只能在服务器中使用!", ephemeral=True)
+        return
+    if interaction.user.guild_permissions.administrator is False:
+        await interaction.response.send_message("你没有权限使用此命令!", ephemeral=True)
+        return
+    await interaction.response.defer()
+    with open('config_discord.json', 'r+') as f:
+        config = json.load(f)
+    config_guild: dict = config.get(str(guild_id))
+    if True:
+        if config_guild.get("audio_files") is None:
+            await interaction.followup.send("未发现音频:(", ephemeral=True)
+            return
+        if config_guild.get("channel_id") is None:
+            await interaction.followup.send("未设置频道:(", ephemeral=True)
+            return
+        voice_channel = bot.get_channel(config_guild["channel_id"])
+        await interaction.followup.send(f"起床了!!!! ---来着管理:{interaction.user.display_name}")
+
+        if voice_channel and isinstance(voice_channel, discord.VoiceChannel):
+            vc = await voice_channel.connect()
+            for file in config_guild["audio_files"]:
+                vc.play(discord.FFmpegPCMAudio(file))
+                while vc.is_playing():
+                    await asyncio.sleep(1)
+            await interaction.followup.send("播放完成", ephemeral=True)
+
+            await vc.disconnect()
+
+# 在 bot 启动时新建线程执行
+bot.tree.add_command(bed)
+
+# 在 bot 启动时新建线程执行
 bot.tree.add_command(group)
 bot.run(my_bot_token)

@@ -1,0 +1,9 @@
+{
+    "1141318996965208124": {
+        "hour_to_wake_up": 3,
+        "channel_id": 1296832768440795219,
+        "audio_files": [
+            "wakeup.mp3"
+        ]
+    }
+}

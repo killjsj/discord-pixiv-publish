@@ -12,13 +12,131 @@ from discord.ui import Button, View
 import requests
 import os
 import random
+import openai
+# Discord 文件大小限制（8MB）
 MAX_DISCORD_FILE_SIZE = 8 * 1024 * 1024  # 8MB
+
 # 配置
 from dotenv import load_dotenv
 
 # 加载 .env 文件
 load_dotenv()
 my_bot_token = os.getenv("DISCORD_BOT_TOKEN")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_API_BASE = os.getenv("OPENAI_API_BASE")  # 添加自定义API基础URL
+ai = openai.OpenAI(api_key=OPENAI_API_KEY,base_url=OPENAI_API_BASE)  # 使用自定义API基础URL
+
+class ModQuestionButton(discord.ui.View):
+    def __init__(self, bot):
+        super().__init__(timeout=None)
+        self.bot = bot
+
+    @discord.ui.button(label="开始提问", style=discord.ButtonStyle.primary,custom_id="mod_question_button")
+    async def mod_question(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # 创建用户专属频道
+        channel_name = f"mod-qa-{interaction.user.name}"
+        overwrites = {
+            interaction.guild.default_role: discord.PermissionOverwrite(read_messages=False),
+            interaction.user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
+            interaction.guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True)
+        }
+        
+        question_channel = await interaction.guild.create_text_channel(
+            channel_name,
+            overwrites=overwrites
+        )
+        
+        self.bot.mod_channels[question_channel.id] = {
+            "user_id": interaction.user.id,
+            "context": [{"role": "system", "content": """你是0协的一个机器人，专门帮助用户解决0协mod安装问题。 注意:你不能使用MARKDOWN!  正常安装流程:下载并打开0协工具箱(安装链接:国内:https://download.zeroasso.top/files/LLC_MOD_Toolbox_Installer.exe 海外:https://github.com/LocalizeLimbusCompany/LLC_MOD_Toolbox/releases 官方wiki:https://www.zeroasso.top/docs/install/autoinstall 需要使用.NET 8.0 Runtime 下载:https://dotnet.microsoft.com/zh-cn/download/dotnet/thank-you/runtime-desktop-8.0.8-windows-x64-installer ) 双击运行LLC_MOD_Toolbox.exe，点击开始安装，并等待安装完成后运行游戏即可。 安装视频:https://www.bilibili.com/video/BV1XfZXYxEa8 (推荐) 以下为部分wiki内容,根据这些指导用户解决问题:\"更改游戏基础语言:
+注意,如果您的游戏基础语言为日文，则可能会出现中文文本字体不一致的问题，影响您的阅读体验。
+请进入游戏，在游戏设置内将游戏基础语言设定为英文，以获得最佳体验。常见问题
+写在前面：
+插件安装器(也称工具箱)仅是我们为了方便用户们下载并更新插件而制作的工具。安装器的工作涉及互联网服务器的开发及运行维护、API的使用以及在线下载、本地安装的服务，因此可能会受到包括但不限于网络环境与系统环境在内的多方面影响。
+这意味着，安装器的可用性，可能在不同用户之间存在差别。
+
+因此，安装器仅仅是安装插件的工具之一，并非唯一安装途径。
+如果您无法使用安装器，则可尝试手动进行插件安装。翻译插件的手动安装与日常更新实际上也非常简单。
+
+对于各位遇到的不同问题，我们也感到非常抱歉与遗憾。但由于我们所受到的开发能力，以及经济能力等限制，我们往往很难将任何问题都完美解决。我们将会持续努力，尽量让更多用户体验到方便、快捷的安装服务，与准确、优质的文本翻译。
+
+感谢各位一贯的理解与支持。
+
+TL;DR：笼统的解决方案
+插件安装器(即工具箱)出现问题
+无法使用安装器安装插件时：
+暂时关闭任何杀毒软件或防火墙等，或解除其对插件文件的影响与限制,
+对安装器执行一次干净的重装,
+确保您完整的删除干净全部旧版本遗留文件,
+从我们提供的渠道下载最新版本安装器并重试,
+进入设置页面调整插件设置,点击切换插件开关状态按钮，确保插件为开启,切换下载节点与API节点，参考这里(https://www.zeroasso.top/docs/configuration/nodes ),考虑使用其他安装方式,考虑进行手动安装,考虑使用文件覆盖，参考这里(https://www.zeroasso.top/docs/FAQ#override-using-working-files )
+安装器启动即闪退时：
+手动对LimbusCompany路径进行设置,参考这里(https://www.zeroasso.top/docs/FAQ#set-folder-path )
+考虑使用其他安装方式,考虑进行手动安装,考虑使用文件覆盖，参考这里(https://www.zeroasso.top/docs/FAQ#override-using-working-files ),翻译插件出现问题,
+插件启动但出现问题时：
+可能是月亮计划提供的接口出现问题。请关注零协会BiliBili账号动态并等待。您的问题可能是普遍的问题，且往往很可能已经被其他人反馈过。此种情况下，还请您耐心等到我们的通告与更新.
+对翻译插件执行一次干净的重装
+确保您完整的删除干净全部旧版本遗留文件,
+推荐使用安装器设置页面内的卸载插件按钮，这将确保一个干净完整的卸载,
+若不使用安装器，确保所有插件相关的文件已经被卸载。如果您不确定是否有残留文件，则删除所有可疑的文件，并使用Steam验证游戏完整性。
+从我们提供的渠道下载最新版本翻译插件并重试,
+推荐使用安装器下载插件,
+若您无法使用安装器安装插件，则可尝试进行手动安装.
+汉化常见问题:
+游戏内中文字体参差不齐，简繁混杂
+如果您的游戏基础语言为日文，则可能会出现中文文本字体不一致的问题，影响您的阅读体验。
+请进入游戏，在游戏设置内将游戏基础语言设定为英文，以获得最佳体验。
+
+已经正确安装插件，但启动仍是英文:
+请您点击游戏启动页左下角的第二个按钮，以打开语言选择框，将语言设为LLC_zh-CN。然后重启游戏即可。
+
+我的字体出现问题:
+您是否正确装载了零协会提供的字体？
+
+请确认您的字体文件夹Limbus Company\\LimbusCompany_Data\\Lang\\LLC_zh-CN\\Font内部是否有且仅有我们提供的ChineseFont.ttf字体文件。
+请删除其它额外字体以恢复您的体验。
+
+安装工具箱常见问题:
+无法使用插件安装器安装翻译插件，安装器报错,
+事实证明，大部分问题是网络问题。针对网络问题，敬请参考排除安装器网络问题的综合指引(https://www.zeroasso.top/docs/FAQ#network-fix )。
+
+校验Hash失败:
+如果您是在插件刚释放最新版本时就更新的，请先等待几分钟，刷个视频再回来继续,
+切换节点(https://www.zeroasso.top/docs/configuration/nodes )再尝试,
+选择一个可用的节点非常重要，对您是否能顺利下载起决定性作用。
+更换网络环境再尝试:
+例如：开/关加速器或代理、更换另一个网络、使用手机热点.
+找不到Limbuscompany.exe/插件工具箱闪退:
+目前寻找边狱公司路径可能存在部分问题，导致自动寻找边狱公司路径出现问题。
+您可以通过手动填写游戏路径解决问题(详见https://www.zeroasso.top/docs/FAQ/ )。
+
+Details:
+排除安装器网络问题的综合指引:
+除开游戏本身，翻译插件的运行并不需要网络。您不会在使用插件的过程中遇到插件导致的网络问题，而只会在安装过程中遇到网络问题。
+以下指引将帮助您排查任何潜在的，有关安装器的网络问题。
+请您先检查您的游戏根目录内的文件是否符合以下列表：Limbus Company\\LimbusCompany_Data\\Lang\\LLC_zh-CN , Limbus Company\\LimbusCompany_Data\\Lang\\LLC_zh-CN\\Font Limbus Company\\LimbusCompany_Data\\Lang\\LLC_zh-CN\\Font\\Context Limbus Company\\LimbusCompany_Data\\Lang\\LLC_zh-CN\\Font\\Title
+若不符合，则说明您的汉化插件安装不完整。
+我们认为，安装完整的汉化插件一般不会出现问题。
+自安装器0.5.0版本以来，安装器从数个国内通用网盘服务作为下载源进行下载。通常来说，(若您也在国内，那么)这些基于国内的服务应当是可用的。
+请您首先确认您使用的局域网的质量，然后，在安装过程中关闭任何游戏加速器。
+（加速器虽然在原理上不应该影响和零协会服务器的链接，但事实证明影响依然可能存在。）
+如果问题依然存在，请参考节点切换进行安装器的节点设置，尝试使用不同的节点来寻找可用性最好的下载节点。
+选择一个可用的节点非常重要，对您是否能顺利下载起决定性作用。\" 如果以上这些无法解决问题,让他联系管理.  删除对话(不是结束输出,删除后用户无法回复 上下文将被删除,你将无法获得后续 请在帮助用户成功修复后或主动要求后使用): 只要你的输出 内 有特殊字符串:"<__I_THINK_I_CAN_END_THIS__>"就会 立即 删除对话并且不会发送消息,所以如果帮助用户成功修复后或主动要求后,你要删除对话,请在输出内包含:"<__I_THINK_I_CAN_END_THIS_WAIT_FOR_10S__>" 将会输出后等待10秒后删除对话.  """}]
+        }
+        
+        await interaction.response.send_message(
+            f"已创建问答频道 {question_channel.mention}",
+            ephemeral=True
+        )
+        
+        await question_channel.send(
+            "欢迎来到mod问答频道！请直接输入您的问题，我会尽力帮助您解决0协mod安装问题。\n"
+            "注意：此频道会在30分钟无活动后自动关闭且AI无法识别图片(暂时) \n"
+            "注: 我没给ai设置防调教,所以你可以这么干,但浪费的是我的token,浪费可耻."
+        )
+
+
+
 class MyBot(discord.Client):
     def __init__(self):
         intents = discord.Intents.default()
@@ -30,15 +148,48 @@ class MyBot(discord.Client):
         self.tree = app_commands.CommandTree(self)
         self.command_cooldowns = {}
         self.trpg_sessions: Dict[int, TRPGSession] = {}
+        self.mod_channels = {}  # 存储mod问答频道信息
 
     async def setup_hook(self):
         # 同步斜杠命令
         await self.tree.sync()
         print("Commands synced!")
-        
+        self.add_view(ModQuestionButton(self))
+        for guild in self.guilds:
+            await self.check_mod_channel(guild)
         # 创建定时任务
         self.loop.create_task(check_bed_time())
+        self.loop.create_task(check_inactive_channels())
+        
+    async def check_mod_channel(self, guild):
+        """检查并创建mod问答频道"""
+        channel = discord.utils.get(guild.channels, name="modquestion")
+        if not channel:
+            overwrites = {
+                guild.default_role: discord.PermissionOverwrite(
+                    read_messages=True,
+                    send_messages=False
+                ),
+                guild.me: discord.PermissionOverwrite(
+                    read_messages=True,
+                    send_messages=True
+                )
+            }
+            
+            # channel = await guild.create_text_channel(
+            #     'modquestion',
+            #     overwrites=overwrites
+            # )
+            
+            # embed = discord.Embed(
+            #     title="安装问答助手",
+            #     description="点击下方按钮开始提问",
+            #     color=discord.Color.blue()
+            # )
+            
+            # await channel.send(embed=embed, view=ModQuestionButton(self))
 
+    
     def check_rate_limit(self, user_id: int) -> tuple[bool, float]:
         """
         检查用户是否超过频率限制
@@ -57,6 +208,7 @@ class MyBot(discord.Client):
             
         user_times.append(current_time)
         return True, 0
+
 
 async def download_image(url: str, filename: str) -> bool:
     """下载图片到本地"""
@@ -97,6 +249,67 @@ async def compress_image_to_limit(filename: str, max_size: int = MAX_DISCORD_FIL
 
 # 创建机器人实例
 bot = MyBot()
+
+@bot.tree.command(name="createmod", description="创建mod问答频道")
+@app_commands.describe(
+    name="频道名称(可选)"
+)
+async def createmod(interaction: discord.Interaction, name: str = "ModQuestion"):
+    """创建新的mod问答频道"""
+    # 检查权限
+    if not interaction.user.guild_permissions.manage_channels:
+        await interaction.response.send_message("你没有权限创建频道!", ephemeral=True)
+        return
+        
+    # 检查是否已存在同名频道
+    channel = discord.utils.get(interaction.guild.channels, name=name)
+    if channel:
+        await interaction.response.send_message(f"频道 #{name} 已存在!", ephemeral=True)
+        return
+
+    try:
+        # 创建新频道
+        overwrites = {
+            interaction.guild.default_role: discord.PermissionOverwrite(
+                read_messages=True,
+                send_messages=False
+            ),
+            interaction.guild.me: discord.PermissionOverwrite(
+                read_messages=True,
+                send_messages=True
+            )
+        }
+        
+        channel = await interaction.guild.create_text_channel(
+            name,
+            overwrites=overwrites
+        )
+        
+        embed = discord.Embed(
+            title="Mod问答助手",
+            description="点击下方按钮开始提问,将为您创建专属问答频道(自动删除)。\n注意:不要在同一时间创建过多频道,这会增加服务器负担。\n注:机器人回答会有些许延迟,这是正常现象。",
+            color=discord.Color.blue()
+        )
+        
+        await channel.send(embed=embed, view=ModQuestionButton(bot))
+        await interaction.response.send_message(
+            f"已创建mod问答频道 {channel.mention}",
+            ephemeral=True
+        )
+        
+    except discord.Forbidden:
+        await interaction.response.send_message(
+            "创建频道失败:权限不足",
+            ephemeral=True
+        )
+    except Exception as e:
+        await interaction.response.send_message(
+            f"创建频道时发生错误: {str(e)}",
+            ephemeral=True
+        )
+
+    
+
 
 @bot.tree.command(name="setu", description="Send a random pixiv photo"
                       )
@@ -161,7 +374,7 @@ async def setu(interaction: discord.Interaction, r18: str, num: int = 1, tags0: 
     
 
     # API 2: https://image.anosu.top/pixiv/json
-    api_url_2 = "https://image.anosu.top/pixiv/json"
+    # api_url_2 = "https://image.anosu.top/pixiv/json" # 寄-----
     if not public:
             if num >4:
                 await interaction.followup.send("在公开情况下数量超过4 可能刷屏 已拒绝执行;(",ephemeral=True)
@@ -170,40 +383,13 @@ async def setu(interaction: discord.Interaction, r18: str, num: int = 1, tags0: 
     
     try:
         image_data = []
-        if api == 0:
+        if api == 0 or api == 2 or api == 1:
             # 只使用 API 1
             response_api_1 = requests.post(api_url_1, json=params_1)
             response_api_1.raise_for_status()
             image_data = response_api_1.json().get("data", [])
-        elif api == 1:
-            # 只使用 API 2
-            response_api_2 = requests.get(api_url_2, params=params_2)
-            response_api_2.raise_for_status()
-            image_data = response_api_2.json()
-        elif api == 2:
-            # 优先使用 API 1
-            try:
-                response_api_1 = requests.post(api_url_1, json=params_1)
-                response_api_1.raise_for_status()
-                image_data = response_api_1.json().get("data", [])
-            except requests.exceptions.RequestException as e:
-                print(f"API 1 请求失败: {e}")
 
-            # 如果 API 1 没有找到图片或返回 404，尝试使用 API 2
-            if not image_data:
-                print("API 1 没有找到符合条件的图片，尝试使用 API 2")
-                retry_count = 0
-                while retry_count < 4:
-                    response_api_2 = requests.get(api_url_2, params=params_2)
-                    print(f"API 2 请求参数: {params_2}")
-                    if response_api_2.status_code == 404:
-                        print(f"API 2 返回 404，重试次数: {retry_count + 1}")
-                        retry_count += 1
-                        continue
-                    response_api_2.raise_for_status()
-                    image_data = response_api_2.json()
-                    if image_data:
-                        break
+                
 
         # 处理图片数据
         if not image_data:
@@ -213,6 +399,8 @@ async def setu(interaction: discord.Interaction, r18: str, num: int = 1, tags0: 
         print(f"image_data: {image_data}")
         for image in image_data:
             image_url = image.get("url")
+            if image_url == None:
+                image_url = image.get("urls", {}).get("original")
             if not image_url or not isinstance(image_url, str):
                 print(f"无效的图片 URL: {image_url}")
                 continue
@@ -230,19 +418,21 @@ async def setu(interaction: discord.Interaction, r18: str, num: int = 1, tags0: 
                     print(f"图片下载失败: {image_url}，重试次数: {retry_count + 1}")
                     retry_count += 1
 
-                    # 如果达到最大重试次数，切换到 API 2
-                    if retry_count == max_retries:
-                        print("切换到 API 2 获取新图片...")
-                        response_api_2 = requests.get(api_url_2, params=params_2)
-                        response_api_2.raise_for_status()
-                        new_image_data = response_api_2.json()
-                        if new_image_data:
-                            image = new_image_data[0]  # 获取新图片
-                            image_url = image.get("url")
-                            retry_count = 0  # 重置重试计数
-                        else:
-                            print("API 2 没有返回有效图片，跳过当前图片")
-                            break
+                    # # 如果达到最大重试次数，切换到 API 2
+                    # if retry_count == max_retries:
+                    #     print("切换到 API 2 获取新图片...")
+                    #     response_api_2 = requests.get(api_url_2, params=params_2)
+                    #     response_api_2.raise_for_status()
+                    #     new_image_data = response_api_2.json()
+                    #     if new_image_data:
+                    #         image = new_image_data[0]  # 获取新图片
+                    #         image_url = image.get("url")
+                    #         if image_url == None:
+                    #             image_url = image.get("urls", {}).get("original")
+                    #         retry_count = 0  # 重置重试计数
+                    #     else:
+                    #         print("API 2 没有返回有效图片，跳过当前图片")
+                    #         break
 
             if retry_count == max_retries:
                 embed = discord.Embed(title=f"下载图片错误：")
@@ -322,6 +512,9 @@ async def help(interaction: discord.Interaction):
     await interaction.followup.send("""1.框架:discord.py
 2.使用api:"https://api.lolicon.app/setu/v2"
 3.gui我实在不想写了所以感谢copilot""",ephemeral=True)
+
+
+
 
 class TRPGSession:
     def __init__(self, host_id: int, channel_id: int,start_channel_id: int):
@@ -761,7 +954,7 @@ async def pointsT(
         if not point_name:
             await interaction.response.send_message("请指定点数名称!", ephemeral=True)
             return
-        session.points_template[point_name] = 0  # 初始值为0
+        session.points_template[point_name] = 0 # 初始值为0
         await interaction.response.send_message(f"已添加点数项目: {point_name}", ephemeral=False)
     
     elif action == "assign":
@@ -1678,6 +1871,20 @@ async def check_bed_time():
             
         await asyncio.sleep(30)  # 每1分钟检查一次
 
+async def check_inactive_channels():
+    """检查并关闭不活跃的问答频道"""
+    await bot.wait_until_ready()
+    while not bot.is_closed():
+        for channel_id, data in list(bot.mod_channels.items()):
+            channel = bot.get_channel(channel_id)
+            if channel:
+                async for message in channel.history(limit=1):
+                    if (discord.utils.utcnow() - message.created_at).seconds > 1800:  # 30分钟
+                        await channel.delete()
+                        del bot.mod_channels[channel_id]
+                        break
+        await asyncio.sleep(300)  # 每5分钟检查一次
+
 bed = app_commands.Group(name="bed", description="神秘闹钟")
 
 @bed.command(name="setbedtime", description="设置闹钟时间和音频")
@@ -1804,7 +2011,70 @@ async def timeforbed(interaction: discord.Interaction):
 
             await vc.disconnect()
 
-# 在 bot 启动时新建线程执行
+@bot.event
+async def on_message(message):
+    # 忽略机器人自己的消息
+    if message.author.bot:
+        return
+        
+    # 检查是否为mod问答频道的消息
+    if message.channel.id in bot.mod_channels:
+        channel_data = bot.mod_channels[message.channel.id]
+        
+        # 检查发送者是否是频道创建者
+        if message.author.id != channel_data["user_id"]:
+            return
+            
+        async with message.channel.typing():
+            try:
+                # 添加新消息到上下文
+                channel_data["context"].append({
+                    "role": "user",
+                    "content": message.content
+                })
+                print(f"Received message in mod channel {message.channel.id}: {message.content}")
+                # 调用API获取回复
+                response = ai.chat.completions.create(
+                    model="qwen-plus-latest",
+                    messages=channel_data["context"],
+                    
+                )
+                
+                reply = response.choices[0].message.content
+                print(f"Reply from AI: {reply}")
+                if not reply:
+                    reply = "抱歉，我无法处理您的请求。"
+                channel_data["context"].pop(0)  # 移除最旧的消息以保持上下文长度
+                if "<__I_THINK_I_CAN_END_THIS__>" in reply:
+                    reply = reply.replace("<__I_THINK_I_CAN_END_THIS__>", "对话结束")
+                    # 结束问答频道
+                    await message.channel.send("问答结束，频道5秒后将被删除。")
+                    await asyncio.sleep(5)
+                    await message.channel.delete()
+                    del bot.mod_channels[message.channel.id]
+                    return
+                if "<__I_THINK_I_CAN_END_THIS_WAIT_FOR_10S__>" in reply:
+                    reply = reply.replace("<__I_THINK_I_CAN_END_THIS_WAIT_FOR_10S__>", "对话结束")
+                    await message.channel.send(reply)
+                    # 结束问答频道
+                    await message.channel.send("问答结束，频道10秒后将被删除。")
+                    await asyncio.sleep(10)
+                    await message.channel.delete()
+                    del bot.mod_channels[message.channel.id]
+                    return
+                # 保存回复到上下文
+                channel_data["context"].append({
+                    "role": "assistant",
+                    "content": reply
+                })
+                
+                # 发送回复
+                await message.channel.send(reply)
+                
+            except Exception as e:
+                await message.channel.send(f"抱歉，处理您的问题时出现错误：{str(e)}")
+
+
 bot.tree.add_command(bed)
 
 # 在 bot 启动时新建线程执行

@@ -4,3 +4,7 @@ requests
 aiofiles
 pillow
 PyNaCl
+pixivpy3
+selenium
+openai
+httpx[socks]

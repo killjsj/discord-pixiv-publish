@@ -1,7 +1,7 @@
 import asyncio
 import json
 import time
-from typing import Dict, List, Optional, Set
+from typing import Any, Dict, List, Literal, Optional, Set, TypeAlias
 from PIL import Image
 import uuid
 import aiofiles
@@ -22,10 +22,23 @@ from dotenv import load_dotenv
 # 加载 .env 文件
 load_dotenv()
 my_bot_token = os.getenv("DISCORD_BOT_TOKEN")
+
+my_bot_token = os.getenv("DISCORD_BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OPENAI_API_BASE = os.getenv("OPENAI_API_BASE")  # 添加自定义API基础URL
 ai = openai.OpenAI(api_key=OPENAI_API_KEY,base_url=OPENAI_API_BASE)  # 使用自定义API基础URL
+from pixivpy3 import AppPixivAPI
+import pixiv_auth
 
+def get_refresh_token() -> str:
+    with open("token.txt", "r+") as f:
+        if refresh_token := f.read().strip():
+            return refresh_token
+        refresh_token = pixiv_auth.login()["refresh_token"]
+        f.write(refresh_token)
+        return refresh_token
+
+pixiv_refresh_token = get_refresh_token()
 class ModQuestionButton(discord.ui.View):
     def __init__(self, bot):
         super().__init__(timeout=None)
@@ -249,7 +262,11 @@ async def compress_image_to_limit(filename: str, max_size: int = MAX_DISCORD_FIL
 
 # 创建机器人实例
 bot = MyBot()
-
+aapi = AppPixivAPI()
+loginJson = aapi.auth(refresh_token=pixiv_refresh_token)
+pixiv_logined = aapi.access_token != None
+aapi.set_accept_language("zh-cn")  # 设置语言为中文
+print("Pixiv logined:",loginJson)
 @bot.tree.command(name="createmod", description="创建mod问答频道")
 @app_commands.describe(
     name="频道名称(可选)"
@@ -279,7 +296,7 @@ async def createmod(interaction: discord.Interaction, name: str = "ModQuestion")
                 send_messages=True
             )
         }
-        
+
         channel = await interaction.guild.create_text_channel(
             name,
             overwrites=overwrites
@@ -309,7 +326,39 @@ async def createmod(interaction: discord.Interaction, name: str = "ModQuestion")
         )
 
     
+RANDOM_MODE = [
+    "day",
+    "week",
+    "month",
+    "day_male",
+    "day_female",
+    "week_original",
+    "week_rookie",
+    "day_manga",
+    "day_r18",
+    "day_male_r18",
+    "day_female_r18",
+    "week_r18",
+    "week_r18g",
+]
 
+R18_MODE = [
+    "day_r18",
+    "day_male_r18",
+    "day_female_r18",
+    "week_r18",
+    "week_r18g",
+]
+NORMAL_MODE = [
+    "day",
+    "week",
+    "month",
+    "day_male",
+    "day_female",
+    "week_original",
+    "week_rookie",
+    "day_manga",
+]
 
 @bot.tree.command(name="setu", description="Send a random pixiv photo"
                       )
@@ -362,14 +411,14 @@ async def setu(interaction: discord.Interaction, r18: str, num: int = 1, tags0: 
         "r18": r18_param,
         "num": max(1, min(num, 20)),  # 限制 num 在 1 到 20 之间
     }
-    params_2 = {
+    params_2:Dict[str,Any] = {
         "num": max(1, min(num, 15)),  # 限制 num 在 1 到 15 之间
         "r18": r18_param,
-    }
+    } 
     if tags:
         # 将用户输入的 tags 按 '|' 分隔，适配 api2 的多关键词功能
         params_1["tag"] = tags  # 适用于 api1
-        params_2["keyword"] = "|".join(tags)  # 适用于 api2
+        params_2["keyword"] = " ".join(tags)  # 适用于 pixiv
     api_url_1 = "https://api.lolicon.app/setu/v2"
     
 
@@ -380,133 +429,301 @@ async def setu(interaction: discord.Interaction, r18: str, num: int = 1, tags0: 
                 await interaction.followup.send("在公开情况下数量超过4 可能刷屏 已拒绝执行;(",ephemeral=True)
                 return
         
-    
-    try:
-        image_data = []
-        if api == 0 or api == 2 or api == 1:
-            # 只使用 API 1
-            response_api_1 = requests.post(api_url_1, json=params_1)
-            response_api_1.raise_for_status()
-            image_data = response_api_1.json().get("data", [])
+    if not pixiv_logined:
+        try:
+            image_data = []
+            if api == 0 or api == 2 or api == 1:
+                # 只使用 API 1
+                response_api_1 = requests.post(api_url_1, json=params_1)
+                response_api_1.raise_for_status()
+                image_data = response_api_1.json().get("data", [])
 
-                
+                    
 
-        # 处理图片数据
-        if not image_data:
-            await interaction.followup.send("没有找到符合条件的图片", ephemeral=True)
-            return
+            # 处理图片数据
+            if not image_data:
+                await interaction.followup.send("没有找到符合条件的图片", ephemeral=True)
+                return
 
-        print(f"image_data: {image_data}")
-        for image in image_data:
-            image_url = image.get("url")
-            if image_url == None:
-                image_url = image.get("urls", {}).get("original")
-            if not image_url or not isinstance(image_url, str):
-                print(f"无效的图片 URL: {image_url}")
-                continue
+            print(f"image_data: {image_data}")
+            for image in image_data:
+                image_url = image.get("url")
+                if image_url == None:
+                    image_url = image.get("urls", {}).get("original")
+                if not image_url or not isinstance(image_url, str):
+                    print(f"无效的图片 URL: {image_url}")
+                    continue
 
-            temp_filename = f"temp_{uuid.uuid4()}.jpg"
-            print(f"下载图片: {image_url}")
-            max_retries = 4
-            retry_count = 0
-            # 下载图片
-            while retry_count < max_retries:
-                if await download_image(image_url, temp_filename):
-                    print(f"图片下载成功: {image_url}")
+                temp_filename = f"temp_{uuid.uuid4()}.jpg"
+                print(f"下载图片: {image_url}")
+                max_retries = 4
+                retry_count = 0
+                show_url = "https://www.pixiv.net/artworks/" + str(image.get("pid", "unknown"))
+                # 下载图片
+                while retry_count < max_retries:
+                    if await download_image(image_url, temp_filename):
+                        print(f"图片下载成功: {image_url}")
+                        break
+                    else:
+                        print(f"图片下载失败: {image_url}，重试次数: {retry_count + 1}")
+                        retry_count += 1
+
+                        # # 如果达到最大重试次数，切换到 API 2
+                        # if retry_count == max_retries:
+                        #     print("切换到 API 2 获取新图片...")
+                        #     response_api_2 = requests.get(api_url_2, params=params_2)
+                        #     response_api_2.raise_for_status()
+                        #     new_image_data = response_api_2.json()
+                        #     if new_image_data:
+                        #         image = new_image_data[0]  # 获取新图片
+                        #         image_url = image.get("url")
+                        #         if image_url == None:
+                        #             image_url = image.get("urls", {}).get("original")
+                        #         retry_count = 0  # 重置重试计数
+                        #     else:
+                        #         print("API 2 没有返回有效图片，跳过当前图片")
+                        #         break
+
+                if retry_count == max_retries:
+                    embed = discord.Embed(title=f"下载图片错误：")
+                    a = ""
+                    if image.get("author", "") != "":
+                        a = image.get("author", "")
+                    elif image.get("user", "") != "":
+                        a = image.get("user", "")
+                    else:
+                        a = "未知"
+                    embed.add_field(name="标题", value=image.get("title", "未知"), inline=True)
+                    embed.add_field(name="作者", value=a, inline=True)
+                    embed.add_field(name="PID", value=show_url, inline=True)
+                    embed.add_field(name="标签", value=", ".join(image.get("tags", [])), inline=False)
+                    embed.add_field(name="URL", value=image_url, inline=False)
+                    embed.add_field(name="重试次数:", value=retry_count, inline=False)
+                    await interaction.followup.send(embed=embed, ephemeral=True)
+                    continue  # 跳过当前图片
+
+                try:
+                    # 检查文件大小，超限则压缩
+                    if os.path.getsize(temp_filename) > MAX_DISCORD_FILE_SIZE:
+                        compressed_filename = await compress_image_to_limit(temp_filename, MAX_DISCORD_FILE_SIZE)
+                        if not compressed_filename:
+                            await interaction.followup.send("图片过大且压缩失败", ephemeral=True)
+                            os.remove(temp_filename)
+                            continue
+                        temp_filename = compressed_filename
+
+                    # 上传图片
+                    file = discord.File(temp_filename)
+                    embed = discord.Embed(title=f"Pixiv Image")
+                    embed.add_field(name="标题", value=image.get("title", "未知"), inline=True)
+                    a = ""
+                    if image.get("author", "") != "":
+                        a = image.get("author", "")
+                    elif image.get("user", "") != "":
+                        a = image.get("user", "")
+                    else:
+                        a = "未知"
+                    embed.add_field(name="作者", value=a, inline=True)
+                    embed.add_field(name="PID", value=show_url, inline=True)
+                    embed.add_field(name="标签", value=", ".join(image.get("tags", [])), inline=False)
+                    embed.add_field(name="URL", value=image_url, inline=False)
+                    embed.add_field(name="重试次数:", value=retry_count, inline=False)
+                    
+                    embed.set_image(url=f"attachment://{os.path.basename(temp_filename)}")
+                    await interaction.followup.send(file=file, embed=embed, ephemeral=public)
+                    os.remove(temp_filename)
+                except Exception as e:
+                    embed = discord.Embed(title=f"上传图片错误：{str(e)}")
+                    a = ""
+                    if image.get("author", "") != "":
+                        a = image.get("author", "")
+                    elif image.get("user", "") != "":
+                        a = image.get("user", "")
+                    else:
+                        a = "未知"
+                    embed.add_field(name="标题", value=image.get("title", "未知"), inline=True)
+                    embed.add_field(name="作者", value=a, inline=True)
+                    embed.add_field(name="PID", value=show_url, inline=True)
+                    embed.add_field(name="标签", value=", ".join(image.get("tags", [])), inline=False)
+                    embed.add_field(name="URL", value=image_url, inline=False)
+                    embed.add_field(name="重试次数:", value=retry_count, inline=False)
+                    
+                    await interaction.followup.send(embed=embed, ephemeral=True)
+                    os.remove(temp_filename)
+
+        except requests.exceptions.RequestException as e:
+            await interaction.followup.send(f"API 请求失败: {str(e)}", ephemeral=True)
+        except Exception as e:
+            embed = discord.Embed(title=f"Exception as e: {str(e)}")
+            await interaction.followup.send(embed=embed, ephemeral=True)
+    else:
+        try:
+            image_data = []
+            random.seed(time.time())
+            if tags:
+                UnPar = aapi.search_illust(params_2["keyword"],sort=random.choice(["date_desc", "date_asc", "popular_desc"]))
+            else:
+                if r18_param == 2:
+                    UnPar = aapi.illust_ranking(mode=random.choice(RANDOM_MODE))
+                elif r18_param == 1:
+                    UnPar = aapi.illust_ranking(mode=random.choice(R18_MODE))
+                else:
+                    UnPar = aapi.illust_ranking(mode=random.choice(NORMAL_MODE))
+            UnPar["illusts"] = [i for i in UnPar["illusts"] if (i.x_restrict == r18_param or r18_param == 2) and not i.is_manga]  # 只获取已收藏的插画
+            for i in UnPar["illusts"]:
+                image_data.append({
+                        "pid": i["id"],
+                        "title": i["title"],
+                        "author": i["user"]["name"],
+                        "tags": [tag["name"]for tag in i["tags"]],
+                        "url": i["image_urls"].get("large", i["image_urls"].get("medium")),
+                        "user": i["user"]["name"]
+                    })
+            
+            get_count = num + 2
+            wi = 0
+            while UnPar["next_url"] != None:
+                wi += 1
+                NextParm = aapi.parse_qs(UnPar["next_url"])
+                if tags:
+                    UnPar = aapi.search_illust(**NextParm)
+                else:
+                    UnPar = aapi.illust_ranking(**NextParm)
+                UnPar["illusts"] = [i for i in UnPar["illusts"] if (i.x_restrict == r18_param or r18_param == 2) and not i.is_manga]  # 只获取已收藏的插画
+                for i in UnPar["illusts"]:
+                    image_data.append({
+                        "pid": i["id"],
+                        "title": i["title"],
+                        "author": i["user"]["name"],
+                        "tags": [tag["name"]for tag in i["tags"]],
+                        "url": i["image_urls"].get("large", i["image_urls"].get("medium")),
+                        "user": i["user"]["name"],
+                        "x_restrict": i["x_restrict"]
+                    })
+                if wi == get_count:
                     break
-                else:
-                    print(f"图片下载失败: {image_url}，重试次数: {retry_count + 1}")
-                    retry_count += 1
+                print(wi)
+            # 处理图片数据
+            if not image_data:
+                await interaction.followup.send("没有找到符合条件的图片", ephemeral=True)
+                return
 
-                    # # 如果达到最大重试次数，切换到 API 2
-                    # if retry_count == max_retries:
-                    #     print("切换到 API 2 获取新图片...")
-                    #     response_api_2 = requests.get(api_url_2, params=params_2)
-                    #     response_api_2.raise_for_status()
-                    #     new_image_data = response_api_2.json()
-                    #     if new_image_data:
-                    #         image = new_image_data[0]  # 获取新图片
-                    #         image_url = image.get("url")
-                    #         if image_url == None:
-                    #             image_url = image.get("urls", {}).get("original")
-                    #         retry_count = 0  # 重置重试计数
-                    #     else:
-                    #         print("API 2 没有返回有效图片，跳过当前图片")
-                    #         break
-
-            if retry_count == max_retries:
-                embed = discord.Embed(title=f"下载图片错误：")
-                a = ""
-                if image.get("author", "") != "":
-                    a = image.get("author", "")
-                elif image.get("user", "") != "":
-                    a = image.get("user", "")
-                else:
-                    a = "未知"
-                embed.add_field(name="标题", value=image.get("title", "未知"), inline=True)
-                embed.add_field(name="作者", value=a, inline=True)
-                embed.add_field(name="PID", value=image.get("pid", "未知"), inline=True)
-                embed.add_field(name="标签", value=", ".join(image.get("tags", [])), inline=False)
-                embed.add_field(name="URL", value=image_url, inline=False)
-                embed.add_field(name="重试次数:", value=retry_count, inline=False)
-                await interaction.followup.send(embed=embed, ephemeral=True)
-                continue  # 跳过当前图片
-
-            try:
-                # 检查文件大小，超限则压缩
-                if os.path.getsize(temp_filename) > MAX_DISCORD_FILE_SIZE:
-                    compressed_filename = await compress_image_to_limit(temp_filename, MAX_DISCORD_FILE_SIZE)
-                    if not compressed_filename:
-                        await interaction.followup.send("图片过大且压缩失败", ephemeral=True)
-                        os.remove(temp_filename)
-                        continue
-                    temp_filename = compressed_filename
-
-                # 上传图片
-                file = discord.File(temp_filename)
-                embed = discord.Embed(title=f"Pixiv Image")
-                embed.add_field(name="标题", value=image.get("title", "未知"), inline=True)
-                a = ""
-                if image.get("author", "") != "":
-                    a = image.get("author", "")
-                elif image.get("user", "") != "":
-                    a = image.get("user", "")
-                else:
-                    a = "未知"
-                embed.add_field(name="作者", value=a, inline=True)
-                embed.add_field(name="PID", value=image.get("pid", "未知"), inline=True)
-                embed.add_field(name="标签", value=", ".join(image.get("tags", [])), inline=False)
-                embed.add_field(name="URL", value=image_url, inline=False)
-                embed.add_field(name="重试次数:", value=retry_count, inline=False)
+            print(f"image_data: {image_data}")
+            random.shuffle(image_data)  # 打乱图片顺序
+            image_data = random.choices(image_data, k=num)
+            for image in image_data:
+                image_url = image.get("url")
+                show_url = "https://www.pixiv.net/artworks/" + str(image.get("pid", "unknown"))
                 
-                embed.set_image(url=f"attachment://{os.path.basename(temp_filename)}")
-                await interaction.followup.send(file=file, embed=embed, ephemeral=public)
-                os.remove(temp_filename)
-            except Exception as e:
-                embed = discord.Embed(title=f"上传图片错误：{str(e)}")
-                a = ""
-                if image.get("author", "") != "":
-                    a = image.get("author", "")
-                elif image.get("user", "") != "":
-                    a = image.get("user", "")
-                else:
-                    a = "未知"
-                embed.add_field(name="标题", value=image.get("title", "未知"), inline=True)
-                embed.add_field(name="作者", value=a, inline=True)
-                embed.add_field(name="PID", value=image.get("pid", "未知"), inline=True)
-                embed.add_field(name="标签", value=", ".join(image.get("tags", [])), inline=False)
-                embed.add_field(name="URL", value=image_url, inline=False)
-                embed.add_field(name="重试次数:", value=retry_count, inline=False)
-                
-                await interaction.followup.send(embed=embed, ephemeral=True)
-                os.remove(temp_filename)
+                if image_url == None:
+                    image_url = image.get("urls", {}).get("original")
+                if not image_url or not isinstance(image_url, str):
+                    print(f"无效的图片 URL: {image_url}")
+                    continue
 
-    except requests.exceptions.RequestException as e:
-        await interaction.followup.send(f"API 请求失败: {str(e)}", ephemeral=True)
-    except Exception as e:
-        embed = discord.Embed(title=f"Exception as e: {str(e)}")
-        await interaction.followup.send(embed=embed, ephemeral=True)
+                temp_filename = f"temp_{uuid.uuid4()}.jpg"
+                print(f"下载图片: {image_url}")
+                max_retries = 4
+                retry_count = 0
+                # 下载图片
+                # 
+                while retry_count < max_retries:
+                    if aapi.download(image_url, name=temp_filename):
+                        print(f"图片下载成功: {image_url}")
+                        break
+                    else:
+                        print(f"图片下载失败: {image_url}，重试次数: {retry_count + 1}")
+                        retry_count += 1
 
+                        # # 如果达到最大重试次数，切换到 API 2
+                        # if retry_count == max_retries:
+                        #     print("切换到 API 2 获取新图片...")
+                        #     response_api_2 = requests.get(api_url_2, params=params_2)
+                        #     response_api_2.raise_for_status()
+                        #     new_image_data = response_api_2.json()
+                        #     if new_image_data:
+                        #         image = new_image_data[0]  # 获取新图片
+                        #         image_url = image.get("url")
+                        #         if image_url == None:
+                        #             image_url = image.get("urls", {}).get("original")
+                        #         retry_count = 0  # 重置重试计数
+                        #     else:
+                        #         print("API 2 没有返回有效图片，跳过当前图片")
+                        #         break
+
+                if retry_count == max_retries:
+                    embed = discord.Embed(title=f"下载图片错误：")
+                    a = ""
+                    if image.get("author", "") != "":
+                        a = image.get("author", "")
+                    elif image.get("user", "") != "":
+                        a = image.get("user", "")
+                    else:
+                        a = "未知"
+                    embed.add_field(name="标题", value=image.get("title", "未知"), inline=True)
+                    embed.add_field(name="作者", value=a, inline=True)
+                    embed.add_field(name="PID", value=image.get("pid", "未知"), inline=True)
+                    embed.add_field(name="标签", value=", ".join(image.get("tags", [])), inline=False)
+                    embed.add_field(name="URL", value=image_url, inline=False)
+                    embed.add_field(name="重试次数:", value=retry_count, inline=False)
+                    await interaction.followup.send(embed=embed, ephemeral=True)
+                    continue  # 跳过当前图片
+
+                try:
+                    # 检查文件大小，超限则压缩
+                    if os.path.getsize(temp_filename) > MAX_DISCORD_FILE_SIZE:
+                        compressed_filename = await compress_image_to_limit(temp_filename, MAX_DISCORD_FILE_SIZE)
+                        if not compressed_filename:
+                            await interaction.followup.send("图片过大且压缩失败", ephemeral=True)
+                            os.remove(temp_filename)
+                            continue
+                        temp_filename = compressed_filename
+
+                    # 上传图片
+                    file = discord.File(temp_filename)
+                    embed = discord.Embed(title=f"Pixiv Image")
+                    embed.add_field(name="标题", value=image.get("title", "未知"), inline=True)
+                    a = ""
+                    if image.get("author", "") != "":
+                        a = image.get("author", "")
+                    elif image.get("user", "") != "":
+                        a = image.get("user", "")
+                    else:
+                        a = "未知"
+                    embed.add_field(name="作者", value=a, inline=True)
+                    embed.add_field(name="PID", value=image.get("pid", "未知"), inline=True)
+                    embed.add_field(name="标签", value=", ".join(image.get("tags", [])), inline=False)
+                    embed.add_field(name="URL", value=show_url, inline=False)
+                    embed.add_field(name="重试次数:", value=retry_count, inline=False)
+                    
+                    embed.set_image(url=f"attachment://{os.path.basename(temp_filename)}")
+                    await interaction.followup.send(file=file, embed=embed, ephemeral=public)
+                    os.remove(temp_filename)
+                except Exception as e:
+                    embed = discord.Embed(title=f"上传图片错误：{str(e)}")
+                    a = ""
+                    if image.get("author", "") != "":
+                        a = image.get("author", "")
+                    elif image.get("user", "") != "":
+                        a = image.get("user", "")
+                    else:
+                        a = "未知"
+                    embed.add_field(name="标题", value=image.get("title", "未知"), inline=True)
+                    embed.add_field(name="作者", value=a, inline=True)
+                    embed.add_field(name="PID", value=image.get("pid", "未知"), inline=True)
+                    embed.add_field(name="标签", value=", ".join(image.get("tags", [])), inline=False)
+                    embed.add_field(name="URL", value=show_url, inline=False)
+                    embed.add_field(name="重试次数:", value=retry_count, inline=False)
+                    
+                    await interaction.followup.send(embed=embed, ephemeral=True)
+                    os.remove(temp_filename)
+
+        except requests.exceptions.RequestException as e:
+            await interaction.followup.send(f"API 请求失败: {str(e)}", ephemeral=True)
+        except Exception as e:
+            embed = discord.Embed(title=f"Exception as e: {str(e)}")
+            await interaction.followup.send(embed=embed)
+    
 @bot.tree.command(name="thanks", description="Send a thanks(?)")
 async def help(interaction: discord.Interaction):
     await interaction.followup.send("""1.框架:discord.py
